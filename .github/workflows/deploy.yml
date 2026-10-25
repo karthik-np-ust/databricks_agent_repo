@@ -1,0 +1,40 @@
+# Branch -> environment deploys into the single Free Edition workspace.
+#   dev  -> bundle target dev  ([dev] jobs, dev catalog), then a smoke run
+#   qa   -> bundle target qa   ([qa] jobs, qa catalog),  then a smoke run
+#   main -> bundle target prod (scheduled jobs, prod catalog). The `prod`
+#           GitHub Environment should require a reviewer (second human gate).
+name: deploy
+
+on:
+  push:
+    branches: [dev, qa, main]
+    paths: ["sample_pipelines/**", ".github/workflows/deploy.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy/smoke run at a time across all environments: keeps us inside
+# Free Edition's 5 concurrent tasks.
+concurrency:
+  group: databricks-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name == 'main' && 'prod' || github.ref_name }}
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+      TARGET: ${{ github.ref_name == 'main' && 'prod' || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: databricks/setup-cli@main
+      - name: Deploy bundle
+        working-directory: sample_pipelines
+        run: databricks bundle deploy -t "$TARGET"
+      - name: Smoke run (dev/qa only; prod runs on schedule or via the agent)
+        if: env.TARGET != 'prod'
+        working-directory: sample_pipelines
+        run: databricks bundle run -t "$TARGET" orders_pipeline

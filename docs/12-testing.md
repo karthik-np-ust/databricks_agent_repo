@@ -1,0 +1,47 @@
+# 12 · Testing
+
+| Suite | Command | Needs | What it covers |
+|---|---|---|---|
+| Core + plugins | `pytest` | venv only | Monitor/policy scenarios on the simulator, redaction, classification, config merge, secrets, registry and API versioning, notifications, demo-kit consistency, both plugin contract suites, Databricks plugin mapping against a fake client |
+| Sample pipelines | `pytest sample_pipelines/tests -rs` | `pip install -r sample_pipelines/requirements-dev.txt` + Java 17 for the Spark tests | Table naming (pure Python) and Spark transforms with ANSI mode on, like serverless |
+| CI | `.github/workflows/ci.yml` | GitHub | Both suites, agent path guard, `bundle validate` |
+
+## Scenario tests ([tests/test_monitor.py](../tests/test_monitor.py))
+Each one drives the real Monitor + PolicyEngine + StateStore against the simulator with a fake clock:
+- healthy run → no action
+- scenario 1: slow run → cancel + rerun twice → escalation on the 3rd breach, once
+- scenario 2: transient → one rerun → recovers, no incident. Repeated failures → escalation.
+- scenario 3: code failure → incident `cast_invalid_input`, fix-eligible only with `auto_fix`, never rerun
+- scenario 11: permission failure → escalation, no rerun
+- scenario 13: fake token redacted in incident, notifications and audit
+- dev env → notify only
+- kill switch, dry run, circuit breaker, p95 baseline threshold
+- platform without a controller → escalation
+- one broken platform doesn't stop the others
+
+## Demo kit consistency ([tests/test_demo_kit.py](../tests/test_demo_kit.py))
+- Every data scenario produces the intended bad data.
+- Every release-fault edit still matches exactly one place in the current code, so the fault kit can't silently rot when the pipelines change.
+- The syntax-error fault really is a syntax error.
+- The fault catalog numbers cover 1–14.
+
+## LLM tests ([tests/test_llm.py](../tests/test_llm.py))
+Run with a fake OpenAI client (no network). They cover:
+- ledger and cost
+- redaction before sending
+- model fallback and all-models-fail
+- daily request budget and per-incident token budget
+- tool-call parsing and JSON-in-content fallback
+- unusable answers
+- injection heuristic
+- monitor integration: diagnosis stored, scenario 14 budget stop, LLM outage, scenario 12 flag
+
+Tests run with every `AGENT_*` variable removed (autouse fixture), so a developer's `.env` can't change results.
+
+## Live checks
+- `python scripts/phase0_checks.py`: real Databricks and OpenRouter.
+- `AGENT_LLM_ENABLED=true pipeline-agent once` (twice, about 50 s apart) against the simulator: real diagnoses, visible in `pipeline-agent incidents --show 1` and `pipeline-agent llm`.
+
+## Latest local result (2026-10-25)
+- `pytest`: **97 passed**.
+- `pytest sample_pipelines/tests`: **3 passed, 1 skipped** (Spark module skipped: no PySpark/Java on this machine).

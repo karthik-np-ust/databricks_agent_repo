@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-plugin-simulator"
+version = "0.1.0"
+description = "Simulated ETL platform for pipeline-agent: reference plugin, tests and demos without a real platform."
+requires-python = ">=3.11"
+dependencies = ["pipeline-agent>=0.1"]
+
+[project.entry-points."pipeline_agent.plugins"]
+simulator = "pipeline_agent_simulator.plugin:SimulatorPlugin"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+pipeline_agent_simulator = ["knowledge/*.yaml"]

@@ -1,0 +1,8 @@
+# The simulator emits Databricks-style error messages, so it uses the same rules.
+rules:
+  - name: cast_invalid_input
+    pattern: "CAST_INVALID_INPUT"
+    class: code
+  - name: permission_denied
+    pattern: "PERMISSION_DENIED"
+    class: infra

@@ -1,0 +1,7 @@
+# LLM budgets, enforced by the LLM gateway before every call (ledger: llm_calls table).
+# When a budget is hit the agent stops calling the LLM and escalates the incident.
+budgets:
+  per_incident_usd: 0.50
+  per_day_usd: 2.00
+  per_incident_tokens: 200000
+  per_day_requests: 45        # OpenRouter free tier: 50/day (1000/day after $10 credit)

@@ -1,0 +1,90 @@
+# Three small serverless jobs. Tasks inside a job run sequentially, so at most
+# 3 tasks run at once even with every environment busy: inside Free Edition's
+# limit of 5 concurrent tasks.
+resources:
+  jobs:
+    orders_pipeline:
+      name: orders_pipeline
+      max_concurrent_runs: 1
+      schedule:
+        quartz_cron_expression: "0 0 6 * * ?"
+        timezone_id: UTC
+      tags:
+        demo: pipeline-agent
+      parameters:
+        - { name: catalog, default: "${var.catalog}" }
+        - { name: env, default: "${var.env}" }
+        - { name: layout, default: "${var.layout}" }
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "2"
+      tasks:
+        - task_key: ingest_bronze
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/ingest_bronze.py
+            parameters: ["--catalog", "{{job.parameters.catalog}}", "--env", "{{job.parameters.env}}", "--layout", "{{job.parameters.layout}}"]
+        - task_key: transform_silver
+          depends_on: [{ task_key: ingest_bronze }]
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/transform_silver.py
+            parameters: ["--catalog", "{{job.parameters.catalog}}", "--env", "{{job.parameters.env}}", "--layout", "{{job.parameters.layout}}"]
+        - task_key: build_gold
+          depends_on: [{ task_key: transform_silver }]
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/build_gold.py
+            parameters: ["--catalog", "{{job.parameters.catalog}}", "--env", "{{job.parameters.env}}", "--layout", "{{job.parameters.layout}}"]
+
+    sales_report:
+      name: sales_report
+      max_concurrent_runs: 1
+      schedule:
+        quartz_cron_expression: "0 30 6 * * ?"
+        timezone_id: UTC
+      tags:
+        demo: pipeline-agent
+      parameters:
+        - { name: catalog, default: "${var.catalog}" }
+        - { name: env, default: "${var.env}" }
+        - { name: layout, default: "${var.layout}" }
+        - { name: sleep_seconds, default: "0" }   # fault scenario 1 sets 900
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "2"
+      tasks:
+        - task_key: sales_report
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/sales_report.py
+            parameters: ["--catalog", "{{job.parameters.catalog}}", "--env", "{{job.parameters.env}}", "--layout", "{{job.parameters.layout}}",
+                         "--sleep-seconds", "{{job.parameters.sleep_seconds}}"]
+
+    partner_feed_ingest:
+      name: partner_feed_ingest
+      max_concurrent_runs: 1
+      schedule:
+        quartz_cron_expression: "0 0 5 * * ?"
+        timezone_id: UTC
+      tags:
+        demo: pipeline-agent
+      parameters:
+        - { name: catalog, default: "${var.catalog}" }
+        - { name: env, default: "${var.env}" }
+        - { name: layout, default: "${var.layout}" }
+        - { name: flaky_rate, default: "0" }          # fault scenario 2 sets 0.7
+        - { name: leak_fake_token, default: "false" } # fault scenario 13 sets true
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "2"
+      tasks:
+        - task_key: partner_feed
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/partner_feed.py
+            parameters: ["--catalog", "{{job.parameters.catalog}}", "--env", "{{job.parameters.env}}", "--layout", "{{job.parameters.layout}}",
+                         "--flaky-rate", "{{job.parameters.flaky_rate}}", "--leak-fake-token", "{{job.parameters.leak_fake_token}}"]

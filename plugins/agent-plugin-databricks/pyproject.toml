@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-plugin-databricks"
+version = "0.1.0"
+description = "Databricks Jobs plugin for pipeline-agent."
+requires-python = ">=3.11"
+dependencies = ["pipeline-agent>=0.1", "databricks-sdk>=0.40"]
+
+[project.entry-points."pipeline_agent.plugins"]
+databricks = "pipeline_agent_databricks.plugin:DatabricksPlugin"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+pipeline_agent_databricks = ["knowledge/*.yaml"]

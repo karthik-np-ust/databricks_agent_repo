@@ -1,0 +1,10 @@
+# Model routing. Model IDs change often on OpenRouter: check
+# `python scripts/phase0_checks.py` (lists free models with tool support).
+llm:
+  triage_models:
+    - nvidia/nemotron-3.5-super-vl:free
+    - recursive/flint-v1.0:free
+  fix_models: []              # Phase 3 (a stronger paid coding model is recommended)
+  max_tokens: 1500
+  temperature: 0.1
+  max_context_chars: 12000

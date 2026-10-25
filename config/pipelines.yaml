@@ -1,0 +1,24 @@
+# Per-pipeline policies. First matching `match` glob wins; unset fields use `defaults`.
+# `match` is checked against "<platform_id>:<pipeline name>" and the bare pipeline name.
+defaults:
+  # No explicit threshold: use p95 of recent successful runs x baseline_multiplier
+  # once baseline_min_samples runs exist.
+  baseline_multiplier: 1.5
+  baseline_min_samples: 5
+  max_reruns_per_day: 2
+  transient_retries: 1
+  auto_fix: false
+  act_in_envs: [prod]          # dev/qa: notify only, never cancel or rerun
+
+policies:
+  - match: "sales_report"
+    max_duration_seconds: 300  # fault scenario 1 runs it with sleep_seconds=900
+  - match: "orders_pipeline"
+    max_duration_seconds: 1200
+    auto_fix: true             # fix flow (Phase 3) may open PRs
+    owner: data-platform-team
+  - match: "partner_feed_ingest"
+    max_duration_seconds: 600
+
+circuit_breaker:
+  max_actions_per_hour: 10     # protects the Free Edition fair-use quota

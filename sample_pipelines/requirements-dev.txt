@@ -1,0 +1,3 @@
+# Local / CI test dependencies for the sample pipelines (Databricks serverless provides Spark at runtime).
+pyspark==3.5.*
+pytest>=8

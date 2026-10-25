@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pipeline-agent"
+version = "0.1.0"
+description = "Multi-platform production support agent for data pipelines (Databricks first)."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "python-dotenv>=1.0",
+    "pyyaml>=6.0",
+    "sqlalchemy>=2.0",
+    "truststore>=0.9",
+    "openai>=1.40",
+]
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.1"]
+dev = ["pytest>=8"]
+
+[project.scripts]
+pipeline-agent = "pipeline_agent.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+pipeline_agent = ["knowledge/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "plugins"]
+addopts = "-q"

@@ -1,0 +1,52 @@
+# Databricks Asset Bundle for the demo pipelines.
+# Free Edition has one workspace, so dev / qa / prod live side by side:
+#   - job names get an environment prefix ("[dev] ", "[qa] ", none for prod)
+#   - each target deploys to its own folder and writes to its own catalog
+#   - only prod schedules are active; dev/qa run on demand (CI or the agent)
+# Branch -> target mapping lives in .github/workflows/deploy.yml (dev->dev, qa->qa, main->prod).
+bundle:
+  name: orders_demo
+
+include:
+  - resources/*.yml
+
+variables:
+  catalog:
+    description: Catalog for this environment (layout=catalog) or "workspace" (layout=schema)
+  env:
+    description: Environment name, passed to every task
+  layout:
+    description: "catalog = <env>.bronze.orders ; schema = workspace.<env>_bronze.orders (fallback if CREATE CATALOG is not allowed)"
+    default: catalog
+
+targets:
+  dev:
+    default: true
+    workspace:
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/dev
+    presets:
+      name_prefix: "[dev] "
+      trigger_pause_status: PAUSED
+    variables:
+      catalog: dev
+      env: dev
+
+  qa:
+    workspace:
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/qa
+    presets:
+      name_prefix: "[qa] "
+      trigger_pause_status: PAUSED
+    variables:
+      catalog: qa
+      env: qa
+
+  prod:
+    mode: production
+    workspace:
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/prod
+    presets:
+      trigger_pause_status: UNPAUSED
+    variables:
+      catalog: prod
+      env: prod

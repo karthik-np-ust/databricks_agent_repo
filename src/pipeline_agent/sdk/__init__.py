@@ -1,0 +1,58 @@
+"""Plugin SDK: everything a platform plugin needs, and nothing platform-specific."""
+
+from .capabilities import (
+    Capability,
+    CodeLocator,
+    CostProvider,
+    EventSource,
+    LogProvider,
+    RunController,
+    RunSource,
+)
+from .classify import ErrorClassifier, ErrorRule, load_rules, parse_rules
+from .models import (
+    CodeRef,
+    CostRecord,
+    Env,
+    ErrorClass,
+    FailureContext,
+    Pipeline,
+    Run,
+    RunEvent,
+    RunRef,
+    RunStatus,
+    TaskFailure,
+    utcnow,
+)
+from .plugin import CapabilityNotSupported, PlatformInstance, PlatformPlugin, PluginManifest, SecretResolver
+
+__all__ = [
+    "Capability",
+    "CapabilityNotSupported",
+    "CodeLocator",
+    "CodeRef",
+    "CostProvider",
+    "CostRecord",
+    "Env",
+    "ErrorClass",
+    "ErrorClassifier",
+    "ErrorRule",
+    "EventSource",
+    "FailureContext",
+    "LogProvider",
+    "Pipeline",
+    "PlatformInstance",
+    "PlatformPlugin",
+    "PluginManifest",
+    "Run",
+    "RunController",
+    "RunEvent",
+    "RunRef",
+    "RunSource",
+    "RunStatus",
+    "SecretResolver",
+    "TaskFailure",
+    "load_rules",
+    "parse_rules",
+    "utcnow",
+]

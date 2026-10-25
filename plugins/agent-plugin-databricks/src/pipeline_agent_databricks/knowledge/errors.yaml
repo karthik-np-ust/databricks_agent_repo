@@ -1,0 +1,43 @@
+# Databricks error-condition -> ErrorClass rules. Checked before the generic rules.
+# Error class names: https://docs.databricks.com/en/error-messages/index.html
+rules:
+  # --- infra / permission / config: escalate, never patch code
+  - name: permission_denied
+    pattern: "PERMISSION_DENIED|INSUFFICIENT_PERMISSIONS|does not have (SELECT|MODIFY|USE CATALOG|USE SCHEMA|READ FILES)"
+    class: infra
+  - name: secret_missing
+    pattern: "Secret does not exist|RESOURCE_DOES_NOT_EXIST.*scope"
+    class: infra
+  - name: fair_use_or_quota
+    pattern: "QUOTA_EXCEEDED|exceeded .*usage limit|fair usage|RESOURCE_EXHAUSTED"
+    class: infra
+  - name: max_concurrent_runs
+    pattern: "MAXIMUM_CONCURRENT_RUNS_REACHED|concurrent task limit"
+    class: infra
+  # --- transient: rerun once
+  - name: serverless_startup
+    pattern: "(serverless|compute) .*(failed to start|unavailable)|CLOUD_PROVIDER_LAUNCH_FAILURE|DRIVER_UNREACHABLE|SPARK_STARTUP_FAILURE"
+    class: transient
+  # --- code / data handling: fix flow
+  - name: cast_invalid_input
+    pattern: "CAST_INVALID_INPUT"
+    class: code
+  - name: divide_by_zero
+    pattern: "DIVIDE_BY_ZERO"
+    class: code
+  - name: merge_duplicate_source_rows
+    pattern: "DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE"
+    class: code
+  - name: unresolved_column
+    pattern: "UNRESOLVED_COLUMN|cannot resolve"
+    class: code
+  - name: dq_assertion
+    pattern: "DQAssertionError"
+    class: code
+  - name: schema_mismatch
+    pattern: "DELTA_FAILED_TO_MERGE_FIELDS|SCHEMA_MISMATCH|DATATYPE_MISMATCH"
+    class: code
+  # A hard-coded catalog/schema usually surfaces as a missing table: config bug in code.
+  - name: table_not_found
+    pattern: "TABLE_OR_VIEW_NOT_FOUND|SCHEMA_NOT_FOUND|CATALOG_NOT_FOUND"
+    class: code

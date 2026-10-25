@@ -1,0 +1,8 @@
+# Scenario 8: a "harmless refactor" mistypes a column name.
+name: typo_column
+expected_error: UNRESOLVED_COLUMN
+commit_message: "refactor: tidy silver column selection"
+edits:
+  - file: sample_pipelines/src/transform_silver.py
+    find: 'F.col("unit_price").cast'
+    replace: 'F.col("unit_prce").cast'

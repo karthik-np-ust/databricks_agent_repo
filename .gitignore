@@ -1,0 +1,18 @@
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# local secrets and agent state
+.env
+agent_state.db
+.sim_state.json
+*.db
+
+# Databricks bundle cache
+.databricks/
+
+# local tool downloads
+.tools/

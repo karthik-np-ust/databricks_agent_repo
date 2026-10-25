@@ -1,0 +1,18 @@
+# Generic, platform-neutral error rules. Plugins add platform-specific rules
+# that are checked before these. Order matters: first match wins.
+rules:
+  - name: permission_denied
+    pattern: "permission[_ ]denied|access denied|not authorized|unauthorized|forbidden|\\b403\\b|insufficient privileges"
+    class: infra
+  - name: missing_secret_or_credential
+    pattern: "secret .* (not found|does not exist)|invalid (token|credentials)|authentication failed"
+    class: infra
+  - name: quota_or_capacity
+    pattern: "quota exceeded|resource exhausted|capacity|concurrent (runs|tasks) (limit|reached)|MAXIMUM_CONCURRENT_RUNS_REACHED"
+    class: infra
+  - name: network_transient
+    pattern: "connection (reset|refused|aborted)|timed? ?out|temporarily unavailable|\\b50[234]\\b|service unavailable|throttl|too many requests|\\b429\\b"
+    class: transient
+  - name: python_syntax_or_import
+    pattern: "SyntaxError|IndentationError|ImportError|ModuleNotFoundError|NameError|AttributeError|TypeError"
+    class: code
