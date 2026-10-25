@@ -1,9 +1,10 @@
-# Replace the placeholder teams with real GitHub teams before the demo.
+# Code owners must be users (@name) or org teams (@org/team). This repo is on a
+# personal account, so owners are users.
 # Branch protection on qa and main must have "Require review from Code Owners" on.
-*                          karthik-np-ust/data-platform-approvers
+*                          @karthik-np-ust
 
 # Changes to automation, agent config and the fault kit need a platform admin.
-/.github/                  karthik-np-ust/platform-admins
-/config/                   karthik-np-ust/platform-admins
-/sample_pipelines/faults/  karthik-np-ust/platform-admins
-/scripts/                  karthik-np-ust/platform-admins
+/.github/                  @karthik-np-ust
+/config/                   @karthik-np-ust
+/sample_pipelines/faults/  @karthik-np-ust
+/scripts/                  @karthik-np-ust

@@ -31,10 +31,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: databricks/setup-cli@main
-      - name: Deploy bundle
+      - name: Validate and deploy bundle
         working-directory: sample_pipelines
-        run: databricks bundle deploy -t "$TARGET"
+        run: |
+          set -o pipefail
+          databricks bundle validate -t "$TARGET" 2>&1 | tee -a "$RUNNER_TEMP/bundle.log"
+          databricks bundle deploy -t "$TARGET" 2>&1 | tee -a "$RUNNER_TEMP/bundle.log"
       - name: Smoke run (dev/qa only; prod runs on schedule or via the agent)
         if: env.TARGET != 'prod'
         working-directory: sample_pipelines
-        run: databricks bundle run -t "$TARGET" orders_pipeline
+        run: |
+          set -o pipefail
+          databricks bundle run -t "$TARGET" orders_pipeline 2>&1 | tee -a "$RUNNER_TEMP/bundle.log"
+      # Job logs need a signed-in GitHub user; annotations are visible to anyone
+      # (and to the agent's tooling), so publish the tail of the output on failure.
+      - name: Publish failure output as annotation
+        if: failure()
+        run: |
+          msg=$(tail -n 40 "$RUNNER_TEMP/bundle.log" 2>/dev/null | sed -e 's/%/%25/g' -e 's/\r//g' | awk '{printf "%s%%0A", $0}')
+          echo "::error title=bundle ${TARGET}::${msg:-no output captured}"
