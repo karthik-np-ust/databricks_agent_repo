@@ -116,6 +116,11 @@ class LlmConfig(BaseModel):
     max_context_chars: int = 12_000
 
 
+class ForbiddenPattern(BaseModel):
+    pattern: str  # regex, matched per line
+    message: str
+
+
 class FixConfig(BaseModel):
     repo: str | None = None
     base_branch: str = "main"
@@ -126,6 +131,8 @@ class FixConfig(BaseModel):
     allowed_paths: list[str] = Field(default_factory=list)
     context_paths: list[str] = Field(default_factory=list)
     protected_patterns: list[str] = Field(default_factory=list)
+    # Platform knowledge: code patterns that are known to break at runtime, with the fix hint.
+    forbidden_patterns: list["ForbiddenPattern"] = Field(default_factory=list)
     require_test_change: bool = True
     max_files: int = 6
     max_file_chars: int = 40_000

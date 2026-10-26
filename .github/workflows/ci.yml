@@ -29,6 +29,26 @@ jobs:
       - run: pip install -r sample_pipelines/requirements-dev.txt
       - run: pytest sample_pipelines/tests -rs
 
+  # Pipeline code must follow dev -> qa -> main. Learned 2026-10-26: a manual dev -> main
+  # merge shipped an agent fix that had just failed its dev smoke run.
+  # (Agent/console code PRs from feature branches to main are not affected.)
+  promotion-path:
+    if: github.base_ref == 'qa' || github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Pipeline changes must come from the previous environment
+        run: |
+          changed=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD" -- sample_pipelines/ | head -50)
+          if [ -z "$changed" ]; then echo "No pipeline code changes"; exit 0; fi
+          case "${{ github.base_ref }}" in main) need=qa ;; qa) need=dev ;; esac
+          if [ "${{ github.head_ref }}" != "$need" ]; then
+            echo "::error::Pipeline code into ${{ github.base_ref }} must come from '$need' (this PR is from '${{ github.head_ref }}'). Changed: $(echo $changed | tr '\n' ' ')"
+            exit 1
+          fi
+          echo "OK: ${{ github.head_ref }} -> ${{ github.base_ref }}"
+
   console-build:
     runs-on: ubuntu-latest
     steps:

@@ -62,5 +62,5 @@ UI: `npm run build` (strict TypeScript + production bundle), also in CI (`consol
 Live smoke test: all 15 read endpoints return 200 on real data (Databricks billing, GitHub diff), and a viewer action returns 403.
 
 ## Latest local result (2026-10-26)
-- `pytest`: **143 passed**.
+- `pytest`: **148 passed**.
 - `pytest sample_pipelines/tests`: **3 passed, 1 skipped** (Spark module skipped: no PySpark/Java on this machine).

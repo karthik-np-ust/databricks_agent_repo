@@ -140,6 +140,10 @@ def validate_proposal(p: FixProposal, ctx: CodeContext, cfg: FixConfig) -> list[
                 errors.append(f"{path}: does not compile: {exc.msg} (line {exc.lineno})")
             else:
                 errors.extend(f"{path}: {msg}" for msg in undefined_names(f.content, path))
+            for fp in cfg.forbidden_patterns:
+                for n, line in enumerate(f.content.splitlines(), 1):
+                    if re.search(fp.pattern, line):
+                        errors.append(f"{path}: line {n}: {fp.message}")
         original = ctx.files.get(path)
         for pattern in cfg.protected_patterns:
             before = (original or "").count(pattern)
@@ -200,7 +204,9 @@ class FixWriter:
         if ci_failures:
             parts.append(
                 "Your previous fix is the current content of the files above (branch of the fix PR). "
-                "CI ran on it and FAILED. Change the files so these failures go away, keeping the fix:\n"
+                "It FAILED (CI tests or the deploy smoke run in dev). Change the files so these failures go away, keeping the fix. "
+                "Fix the same mistake EVERYWHERE it occurs (all functions, including main()), not only the line in the trace; "
+                "untested code paths run in the smoke test too:\n"
                 f"<ci_output>\n{condense_logs(chr(10).join(ci_failures), 8000)}\n</ci_output>"
             )
         if feedback:

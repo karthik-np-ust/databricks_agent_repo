@@ -97,6 +97,29 @@ def test_failed_check_includes_job_log_excerpt():
     assert "collected 6 items" not in text and "2026-10-26T" not in text
 
 
+def test_strip_ansi_including_lost_escape_bytes():
+    from pipeline_agent.git.github import strip_ansi
+
+    raw = "\x1b[0;31mAttributeError\x1b[0m: no try_cast [39;00m done"
+    assert strip_ansi(raw) == "AttributeError: no try_cast  done"
+
+
+def test_workflow_failure_reads_failed_job_annotations():
+    def handler(req):
+        p = req.url.path
+        if p.endswith("/actions/runs/5/jobs"):
+            return httpx.Response(200, json={"jobs": [{"id": 9, "name": "deploy", "conclusion": "failure"},
+                                                      {"id": 8, "name": "other", "conclusion": "success"}]})
+        if p.endswith("/check-runs/9/annotations"):
+            return httpx.Response(200, json=[
+                {"annotation_level": "failure", "message": "\x1b[0;31mAttributeError\x1b[0m: try_cast%0Aline 74"},
+                {"annotation_level": "failure", "message": "Process completed with exit code 1."},
+            ])
+        return httpx.Response(404, json={})
+
+    assert client(handler).workflow_failure(5) == ["deploy: AttributeError: try_cast\nline 74"]
+
+
 def test_read_file_decodes_and_404_is_none():
     def handler(req):
         if "missing" in req.url.path:

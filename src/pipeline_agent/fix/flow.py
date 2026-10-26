@@ -157,7 +157,7 @@ class FixFlow:
 
         checks = self.repo.checks(pr.head_sha, self.cfg.required_checks)
         if checks.state == "failure":
-            repairs = sum(1 for h in fix.history or [] if (h.get("note") or "").startswith("repair attempt"))
+            repairs = self._repairs_done(fix)
             # Only the agent's own fix PR is repaired; a failing promotion PR means something else broke.
             if fix.stage == 0 and repairs < self.cfg.repair_attempts:
                 return self._repair(fix, pr, checks.failures, repairs + 1)
@@ -187,8 +187,15 @@ class FixFlow:
                 self.audit.log("fix_merge_blocked", f"fix:{fix.id}", pr=pr.url, reason="branch rules require a human")
         return fix.state
 
-    def _repair(self, fix: FixAttemptRow, pr, failures: list[str], attempt: int) -> str:
-        """CI failed on the fix PR: feed the CI output back to the model and push a corrected commit."""
+    def _repairs_done(self, fix: FixAttemptRow) -> int:
+        return sum(1 for h in fix.history or [] if (h.get("note") or "").startswith("repair attempt"))
+
+    def _repair(self, fix: FixAttemptRow, pr, failures: list[str], attempt: int, source: str = "CI") -> str:
+        """Feed the failure output back to the model and push a corrected commit to the fix branch.
+
+        `pr` is the open fix PR (CI failure), or None when the fix was already merged and the
+        dev deploy smoke run failed: the repair then goes out as a new PR fix-branch -> dev.
+        """
         incident = self.store.get_incident(fix.incident_id)
         head = self.repo.branch_sha(fix.branch)
         branch_ctx = self._code_context(head)
@@ -202,20 +209,32 @@ class FixFlow:
         except BudgetExceeded as exc:
             return self._fail(fix, f"LLM budget reached while repairing the fix: {exc}")
         if proposal is None:
-            self.repo.comment(pr.number, "pipeline-agent: CI failed and no valid repair was found, handing over to a human.\n\n- " + "\n- ".join(errors)[:2000])
+            if pr is not None:
+                self.repo.comment(pr.number, f"pipeline-agent: {source} failed and no valid repair was found, handing over to a human.\n\n- " + "\n- ".join(errors)[:2000])
             return self._fail(fix, f"repair attempt {attempt} produced no valid change: " + "; ".join(errors)[:600])
         files = {f.path: f.content for f in proposal.files}
-        commit = self.repo.commit_files(head, fix.branch, files, f"fix: repair attempt {attempt} after CI failure\n\n{proposal.summary[:500]}")
+        commit = self.repo.commit_files(head, fix.branch, files, f"fix: repair attempt {attempt} after {source} failure\n\n{proposal.summary[:500]}")
         excerpt = "\n".join(failures)[:2500]
-        self.repo.comment(
-            pr.number,
-            f"pipeline-agent: CI failed, so I pushed **repair attempt {attempt}/{self.cfg.repair_attempts}**.\n\n"
-            f"**What I changed:** {proposal.summary}\n\n<details><summary>CI output I fixed</summary>\n\n```\n{excerpt}\n```\n</details>",
+        comment = (
+            f"pipeline-agent: {source} failed, so I pushed **repair attempt {attempt}/{self.cfg.repair_attempts}**.\n\n"
+            f"**What I changed:** {proposal.summary}\n\n<details><summary>{source} output I fixed</summary>\n\n```\n{excerpt}\n```\n</details>"
         )
+        target = self.cfg.promotion[0]
+        update = {}
+        if pr is None:
+            # Fix was merged but failed in dev: open a follow-up PR with just the repair.
+            pr = self.repo.find_open_pr(fix.branch, target) or self.repo.open_pr(
+                fix.branch, target, f"[agent] Repair fix for incident #{incident.id} after {source} failure", comment
+            )
+            update = {"state": FixState.PR_OPEN, "stage": 0, "pr_number": pr.number, "prs": {**(fix.prs or {}), target: pr.url}}
+            self.audit.log("fix_pr_opened", f"fix:{fix.id}", pr=pr.url, branch=target, repair=attempt)
+        else:
+            self.repo.comment(pr.number, comment)
         record = {**(fix.proposal or {}), "repairs": attempt, "last_repair": proposal.summary, "files": sorted({*(fix.proposal or {}).get("files", []), *files})}
-        self.store.update_fix(fix.id, now=self.clock(), commit_sha=commit, proposal=record, note=f"repair attempt {attempt}: {proposal.summary[:200]}")
-        self.audit.log("fix_repaired", f"fix:{fix.id}", attempt=attempt, pr=pr.url, files=sorted(files), model=proposal.model)
-        return fix.state
+        self.store.update_fix(fix.id, now=self.clock(), commit_sha=commit, proposal=record,
+                              note=f"repair attempt {attempt} ({source}): {proposal.summary[:200]}", **update)
+        self.audit.log("fix_repaired", f"fix:{fix.id}", attempt=attempt, pr=pr.url, files=sorted(files), model=proposal.model, source=source)
+        return update.get("state", fix.state)
 
     def _deploying(self, fix: FixAttemptRow) -> str:
         target = self.cfg.promotion[fix.stage]
@@ -223,6 +242,11 @@ class FixFlow:
         if run is None or run.status != "completed":
             return fix.state
         if run.conclusion != "success":
+            # The dev smoke run is the first place the code meets the real platform; untested
+            # paths fail here. Repair like a CI failure (same attempt budget), then re-promote.
+            if fix.stage == 0 and self._repairs_done(fix) < self.cfg.repair_attempts:
+                failures = self.repo.workflow_failure(run.id) or [f"deploy {run.conclusion}: {run.url}"]
+                return self._repair(fix, None, failures, self._repairs_done(fix) + 1, source=f"{target} deploy smoke run")
             return self._fail(fix, f"deploy to {target} {run.conclusion}: {run.url}")
         self.audit.log("fix_deployed", f"fix:{fix.id}", branch=target, run=run.url)
         if fix.stage == len(self.cfg.promotion) - 1:

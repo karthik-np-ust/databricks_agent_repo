@@ -109,6 +109,7 @@ Failed attempts count too. When a cap is hit, the incident is escalated and the 
 | `allowed_paths` | `sample_pipelines/src/`, `sample_pipelines/tests/` | The only paths a fix may change (CI path-guard enforces the same rule) |
 | `context_paths` | bundle YAML files | Read-only context for the model |
 | `protected_patterns` | `assert_not_null(` | Count per file may not decrease (no deleting data-quality checks) |
+| `forbidden_patterns` | `F.try_cast(`, `.try_cast(` | Platform knowledge: regex + hint. A match is rejected before commit and the hint is fed back to the model |
 | `require_test_change` | `true` | A test under `tests/` must be added or changed |
 | `max_files`, `max_file_chars`, `max_context_chars` | 6 / 40000 / 60000 | Limits |
 | `patch_attempts` | 2 | 1 retry with validation errors fed back |
