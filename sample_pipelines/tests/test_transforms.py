@@ -29,3 +29,23 @@ def test_daily_sales_aggregates(spark, fixtures_dir):
     assert rows["S001"]["units"] == 3
     assert rows["S001"]["orders"] == 2
     assert float(rows["S001"]["revenue"]) == 25.0
+
+
+def test_clean_orders_handles_bad_qty(spark, fixtures_dir):
+    """clean_orders should return NULL for non-numeric qty instead of throwing."""
+    df = read_fixture(spark, fixtures_dir, "orders_bad_qty.csv")
+    out = clean_orders(df)
+    # Should have 5 rows (all input rows preserved)
+    assert out.count() == 5
+    # Rows with bad qty should have NULL qty
+    bad_rows = out.filter(F.col("qty").isNull()).collect()
+    assert len(bad_rows) == 2
+    bad_order_ids = {r["order_id"] for r in bad_rows}
+    assert bad_order_ids == {"ORD-000002", "ORD-000004"}
+    # Good rows should have correct int values
+    good_rows = out.filter(F.col("qty").isNotNull()).collect()
+    assert len(good_rows) == 3
+    qty_map = {r["order_id"]: r["qty"] for r in good_rows}
+    assert qty_map["ORD-000001"] == 1
+    assert qty_map["ORD-000003"] == 2
+    assert qty_map["ORD-000005"] == 3
