@@ -50,6 +50,12 @@ class Settings(BaseSettings):
     )
     # Fallback identity: a bot account's token.
     github_token_ref: str = "env://GITHUB_TOKEN"
+    # Ops Console (Phase 4)
+    console_auth: Literal["demo", "oidc"] = "demo"
+    console_secret: SecretStr | None = None  # signs session tokens; random per start when unset
+    console_host: str = "127.0.0.1"
+    console_port: int = 8080
+    console_dist: Path | None = None  # built frontend; default ./frontend/dist
 
 
 class PlatformConfig(BaseModel):

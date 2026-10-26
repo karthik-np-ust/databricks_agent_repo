@@ -14,8 +14,9 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Float, Integer, String, Text, create_engine, func, select
+from sqlalchemy import JSON, DateTime, Float, Integer, String, Text, create_engine, event, func, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from ..sdk.models import Run, RunStatus, utcnow
 
@@ -139,13 +140,36 @@ class WatermarkRow(Base):
     last_poll: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class ControlRow(Base):
+    """Runtime controls set from the console (kill switch, dry run). Read by the agent every tick."""
+
+    __tablename__ = "agent_controls"
+    key: Mapped[str] = mapped_column(String(50), primary_key=True)
+    value: Mapped[Any] = mapped_column(JSON)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_by: Mapped[str] = mapped_column(String(100))
+
+
 RERUN_ACTIONS = ("cancel_and_rerun", "rerun")
 
 
 class StateStore:
     def __init__(self, database_url: str):
-        connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
-        self.engine = create_engine(database_url, connect_args=connect_args)
+        is_sqlite = database_url.startswith("sqlite")
+        in_memory = database_url in ("sqlite://", "sqlite:///:memory:")
+        connect_args = {"check_same_thread": False, "timeout": 30} if is_sqlite else {}
+        # An in-memory DB exists per connection: share one so every thread (API workers) sees the same data.
+        pool = {"poolclass": StaticPool} if in_memory else {}
+        self.engine = create_engine(database_url, connect_args=connect_args, **pool)
+        if is_sqlite and not in_memory:
+            # WAL lets the agent write while the console reads, without "database is locked".
+            @event.listens_for(self.engine, "connect")
+            def _wal(dbapi_conn, _record):
+                cur = dbapi_conn.cursor()
+                cur.execute("PRAGMA journal_mode=WAL")
+                cur.execute("PRAGMA busy_timeout=30000")
+                cur.close()
+
         Base.metadata.create_all(self.engine)
         self._session = sessionmaker(self.engine, expire_on_commit=False)
 
@@ -388,6 +412,67 @@ class StateStore:
     def list_audit(self, limit: int = 100) -> list[AuditRow]:
         with self.session() as s:
             return list(s.scalars(select(AuditRow).order_by(AuditRow.id.desc()).limit(limit)).all())
+
+    # runtime controls -----------------------------------------------------
+    def get_controls(self) -> dict[str, Any]:
+        with self.session() as s:
+            return {r.key: r.value for r in s.scalars(select(ControlRow)).all()}
+
+    def set_control(self, key: str, value: Any, actor: str, now: datetime | None = None) -> None:
+        with self.session() as s:
+            row = s.get(ControlRow, key) or ControlRow(key=key)
+            row.value, row.updated_at, row.updated_by = value, now or utcnow(), actor
+            s.merge(row)
+            s.commit()
+
+    def list_controls(self) -> list[ControlRow]:
+        with self.session() as s:
+            return list(s.scalars(select(ControlRow)).all())
+
+    # generic read helpers for the console ------------------------------------
+    def list_runs(self, since: datetime | None = None, limit: int = 500, pipeline_id: str | None = None) -> list[RunRow]:
+        with self.session() as s:
+            q = select(RunRow).order_by(RunRow.start_time.desc()).limit(limit)
+            if since is not None:
+                q = q.where(RunRow.start_time >= since)
+            if pipeline_id is not None:
+                q = q.where(RunRow.pipeline_id == pipeline_id)
+            rows = list(s.scalars(q).all())
+            for r in rows:
+                r.start_time, r.end_time, r.last_seen = _aware(r.start_time), _aware(r.end_time), _aware(r.last_seen)
+            return rows
+
+    def list_actions(self, limit: int = 200) -> list[ActionRow]:
+        with self.session() as s:
+            return list(s.scalars(select(ActionRow).order_by(ActionRow.id.desc()).limit(limit)).all())
+
+    def list_watermarks(self) -> dict[str, datetime]:
+        with self.session() as s:
+            return {r.platform_id: _aware(r.last_poll) for r in s.scalars(select(WatermarkRow)).all()}
+
+    def query_audit(self, actor: str | None = None, action: str | None = None, text: str | None = None, limit: int = 200) -> list[AuditRow]:
+        with self.session() as s:
+            q = select(AuditRow).order_by(AuditRow.id.desc()).limit(limit)
+            if actor:
+                q = q.where(AuditRow.actor == actor)
+            if action:
+                q = q.where(AuditRow.action == action)
+            if text:
+                q = q.where(AuditRow.target.contains(text))
+            return list(s.scalars(q).all())
+
+    def audit_for_targets(self, targets: list[str], limit: int = 300) -> list[AuditRow]:
+        with self.session() as s:
+            q = select(AuditRow).where(AuditRow.target.in_(targets)).order_by(AuditRow.id).limit(limit)
+            return list(s.scalars(q).all())
+
+    def llm_calls_for_incident(self, incident_id: int) -> list[LlmCallRow]:
+        with self.session() as s:
+            return list(s.scalars(select(LlmCallRow).where(LlmCallRow.incident_id == incident_id).order_by(LlmCallRow.id)).all())
+
+    def list_llm_calls_since(self, since: datetime) -> list[LlmCallRow]:
+        with self.session() as s:
+            return list(s.scalars(select(LlmCallRow).where(LlmCallRow.ts >= since).order_by(LlmCallRow.ts)).all())
 
     # watermarks -----------------------------------------------------------
     def get_watermark(self, platform_id: str) -> datetime | None:

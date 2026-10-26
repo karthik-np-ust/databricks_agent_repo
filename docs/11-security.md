@@ -33,10 +33,11 @@
 | Fix flow: separate GitHub identity for the agent, so the human review is real (GitHub forbids self-approval). GitHub App with exact permissions, **no Workflows permission**, 1-hour tokens; private key outside the repo | [13-github-setup.md](13-github-setup.md#12-agent-identity-for-phase-3) |
 | GitHub reads retried on network errors and 5xx/429; writes never blindly retried (no duplicates) | [git/github.py](../src/pipeline_agent/git/github.py) |
 | GitHub token never in `repr`/logs | [git/github.py](../src/pipeline_agent/git/github.py) |
+| Console: server-side RBAC on every endpoint, reason required and audited for every human action, PR approval stays in GitHub, strict CSP and security headers, generic 500s, path-traversal guard, secrets shown as references only | [api/](../src/pipeline_agent/api/), [14-console.md](14-console.md) |
 
 ## Known gaps (tracked)
 - Redaction is pattern-based. Unusual secret formats can slip through. Plan: add an entropy-based detector, plus allowlist-based log extraction (send only the error lines) in Phase 2.
-- No authentication on the CLI. It's a local tool and the console (Phase 4) adds Entra ID.
+- No authentication on the CLI (a local tool). **The console uses demo auth (any name and role)** until Entra ID OIDC is added, so don't expose it beyond localhost.
 - SQLite file on disk is unencrypted. Use Postgres with encryption at rest from Stage 2.
 - Prompt injection: detection and flagging are tested (scenario 12). The LLM has no write tools until Phase 3, where the path guard and approvals are the hard controls.
 - **OpenRouter is a third-party proxy.** Even redacted error text leaves UST's boundary. Fine for synthetic demo data only.

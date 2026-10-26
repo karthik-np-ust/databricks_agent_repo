@@ -2,6 +2,22 @@
 
 Newest first. Each entry: what was built, how it was verified, what's next.
 
+## 2026-10-26: Phase 4, Pipeline Ops Console
+- **API** (`pipeline_agent/api`, FastAPI):
+  - 15 read views + 6 audited actions (cancel, rerun, re-run diagnosis, start fix, take over, runtime controls)
+  - RBAC viewer/operator/approver/admin, HMAC-signed sessions (demo login)
+  - security headers and CSP, SPA hosting
+  - `pipeline-agent console`
+- **Runtime controls:** the kill switch and dry run move into the `agent_controls` table; the agent applies them every tick and records a heartbeat (`last_tick`). SQLite runs in WAL mode so the agent and console share the DB.
+- **UI** (`frontend/`, React + TS + Vite + Fluent UI v9 + TanStack Query + ECharts), 12 screens:
+  - Command Center, Pipelines (+ detail), Live runs, Incidents
+  - **Incident detail**: lifecycle tracker built from the audit trail, diagnosis, agent fix with GitHub diff/comments/steps
+  - Fixes, Approvals, Cost & FinOps, Agent observability, Audit (CSV), Settings & controls
+  - UST brand theme with light/dark
+- **Charts:** dataviz method, palette **validated** both modes all-pairs (Dark Teal fails the chroma floor → chrome only; Light Teal is series 1), table view on every chart, tree-shaken ECharts (charts chunk 378 → 194 KB gzip).
+- **Packaging:** multi-stage Dockerfile (Node build → Python image), compose adds the console service, CI `console-build` job.
+- **Verified:** 143 tests pass; `npm run build` clean; live smoke test of all endpoints on real data (9 pipelines, 0.98 DBU from the billing table, PR #4 diff via the GitHub App).
+
 ## 2026-10-26: First live fix run → self-repair
 **What happened (fault `bad_cast` in prod, fix flow on):**
 - Detection and incident worked. The first triage was **unusable**: the reasoning model spent its 1,500 output tokens thinking, so fix_type was `unknown` and no fix started. Fixed: `max_tokens` 4000, triage falls through to the next model on an unusable answer, and the **rule class starts the fix** (the LLM can only veto with `rerun`/`config_or_permission`).

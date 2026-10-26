@@ -51,6 +51,16 @@ These use an in-memory fake GitHub (branches, commits, PRs, checks, deploy runs,
 - deploy failure, timeout, dry run, the one-fix-at-a-time limit
 - GitHub client request shapes through `httpx.MockTransport`
 
+## Console tests ([tests/test_console_api.py](../tests/test_console_api.py))
+The API runs over a store that the real Monitor wrote, through the simulator. The tests cover:
+- login required, tampered token rejected, security headers
+- overview KPIs, pipelines, incident detail and audit, active runs with threshold progress
+- RBAC: a viewer can't act, an operator can, and the action is audited with name and reason; a reason is mandatory
+- the admin kill switch reaches the agent's next tick; take-over; settings never expose secret values
+
+UI: `npm run build` (strict TypeScript + production bundle), also in CI (`console-build`).
+Live smoke test: all 15 read endpoints return 200 on real data (Databricks billing, GitHub diff), and a viewer action returns 403.
+
 ## Latest local result (2026-10-26)
-- `pytest`: **132 passed**.
+- `pytest`: **143 passed**.
 - `pytest sample_pipelines/tests`: **3 passed, 1 skipped** (Spark module skipped: no PySpark/Java on this machine).

@@ -19,3 +19,10 @@ agent_state.db
 
 # local demo config override (AGENT_CONFIG_DIR)
 config.local/
+
+# frontend build output and dependencies
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+*.db-shm
+*.db-wal

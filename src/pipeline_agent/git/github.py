@@ -249,6 +249,19 @@ class GitHubClient:
     def comment(self, number: int, body: str) -> None:
         self._call("POST", f"/issues/{number}/comments", json={"body": body})
 
+    def pr_files(self, number: int) -> list[dict[str, Any]]:
+        """Changed files with unified-diff patches (for the console's diff view)."""
+        files = self._call("GET", f"/pulls/{number}/files", params={"per_page": 100})
+        return [
+            {"filename": f["filename"], "status": f["status"], "additions": f["additions"],
+             "deletions": f["deletions"], "patch": f.get("patch", "")}
+            for f in files
+        ]
+
+    def pr_comments(self, number: int) -> list[dict[str, Any]]:
+        items = self._call("GET", f"/issues/{number}/comments", params={"per_page": 50})
+        return [{"author": c["user"]["login"], "created_at": c["created_at"], "body": c["body"]} for c in items]
+
     # CI ---------------------------------------------------------------------
     def checks(self, sha: str, required: list[str]) -> ChecksStatus:
         runs = self._call("GET", f"/commits/{sha}/check-runs", params={"per_page": 100})["check_runs"]

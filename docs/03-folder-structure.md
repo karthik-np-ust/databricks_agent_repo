@@ -35,7 +35,7 @@ databricks_agent/
 │  ├─ git/                        ✅ github.py (REST: tree, commits, PRs, merges, checks, workflow runs)
 │  ├─ llm/context.py              ✅ condenses JVM traces for LLM and humans
 │  ├─ integrations/               ⏳ Phase 6: OpenLineage receiver, generic REST/SQL plugins
-│  └─ api/                        ⏳ Phase 4: FastAPI for the Ops Console
+│  └─ api/                        ✅ app.py (FastAPI, security headers, SPA), auth.py (roles, signed sessions), views.py, actions.py, context.py
 │
 ├─ plugins/
 │  ├─ agent-plugin-simulator/     ✅ reference plugin: fake pipelines with behaviours
@@ -77,7 +77,11 @@ databricks_agent/
 │  ├─ workflows/deploy.yml        branch → target deploy (dev/qa/main→prod) + smoke runs
 │  ├─ workflows/demo-ops.yml      manual: workspace setup, fault injection, reset (runs on GitHub, not the laptop)
 │  └─ CODEOWNERS                  approvers; admins own .github, config, scripts, faults
-├─ frontend/                      ⏳ Phase 4: React + TypeScript + Fluent UI Ops Console
+├─ frontend/                      ✅ Ops Console: React 18 + TypeScript + Vite + Fluent UI v9 + TanStack Query + ECharts
+│  ├─ src/pages/                  CommandCenter, Pipelines, PipelineDetail, LiveRuns, Incidents, IncidentDetail, Fixes/Approvals, Costs, Observability, Audit, Settings, Login
+│  ├─ src/components/             AppShell, Lifecycle, DiffView, EChart, ChartCard (chart + table view), Status badges, ReasonDialog
+│  ├─ src/api/                    typed client, TanStack Query hooks
+│  └─ src/theme.ts, src/viz.ts    UST brand theme; validated chart palette
 └─ docs/                          this documentation
 ```
 

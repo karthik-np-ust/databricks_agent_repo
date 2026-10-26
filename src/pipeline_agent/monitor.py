@@ -67,12 +67,29 @@ class Monitor:
         }
 
     # ------------------------------------------------------------------ tick
+    def _apply_runtime_controls(self) -> None:
+        """Console controls (agent_controls table) override .env for the kill switch and dry run.
+        The kill switch can only turn the agent OFF: .env AGENT_ENABLED=false always wins."""
+        if not hasattr(self, "_base_settings"):
+            self._base_settings = self.settings
+        controls = self.store.get_controls()
+        update = {}
+        if controls.get("enabled") is False:
+            update["enabled"] = False
+        if isinstance(controls.get("dry_run"), bool):
+            update["dry_run"] = controls["dry_run"]
+        self.settings = self._base_settings.model_copy(update=update)
+        if self.fixer is not None:
+            self.fixer.settings = self.settings
+
     def tick(self) -> TickReport:
         now = self.clock()
         report = TickReport(started_at=now)
+        self._apply_runtime_controls()
+        self.store.set_control("last_tick", now.isoformat(), actor="agent", now=now)
         if not self.settings.enabled:
             report.skipped = True
-            log.warning("Kill switch is on (AGENT_ENABLED=false); skipping poll")
+            log.warning("Kill switch is on (AGENT_ENABLED=false or console); skipping poll")
             return report
         for iid, instance in self.instances.items():
             try:

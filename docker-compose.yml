@@ -1,4 +1,4 @@
-# Stage 1 demo stack: agent + Postgres. The Ops Console joins in Phase 4.
+# Stage 1 demo stack: agent + Ops Console + Postgres (one image, two commands).
 services:
   db:
     image: postgres:16
@@ -20,6 +20,21 @@ services:
       AGENT_DATABASE_URL: postgresql+psycopg://agent:agent@db:5432/agent
     volumes:
       - ./config:/app/config:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  console:
+    build: .
+    command: ["pipeline-agent", "console"]
+    env_file: .env
+    environment:
+      AGENT_DATABASE_URL: postgresql+psycopg://agent:agent@db:5432/agent
+    volumes:
+      - ./config:/app/config:ro
+    ports:
+      - "127.0.0.1:8080:8080"   # localhost only
     depends_on:
       db:
         condition: service_healthy
