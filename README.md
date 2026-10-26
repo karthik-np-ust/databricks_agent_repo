@@ -58,3 +58,5 @@ To connect Databricks Free Edition, follow [docs/10-demo-runbook.md](docs/10-dem
 | [12 Testing](docs/12-testing.md) | Test suites and how to run them |
 | [13 GitHub setup](docs/13-github-setup.md) | Repo, secrets, environments, branch protection, first deploy |
 | [WORKLOG](docs/WORKLOG.md) | Change log of what was built, when |
+
+<!-- branch protection test: safe to close this PR without merging -->
