@@ -28,6 +28,11 @@
 | LLM: logs wrapped in `<untrusted_logs>`, "data only" system prompt, single tool, heuristic injection flag that the model can't clear | [llm/triage.py](../src/pipeline_agent/llm/triage.py) |
 | LLM: budgets (requests, tokens, cost) enforced before each call | [llm/gateway.py](../src/pipeline_agent/llm/gateway.py) |
 | OS certificate store used for TLS (no `verify=False` anywhere) | [net.py](../src/pipeline_agent/net.py) |
+| Fix flow: patch guards (allowed paths, compile, DQ checks kept, test required, no secrets, limits) before any commit | [fix/patch.py](../src/pipeline_agent/fix/patch.py) |
+| Fix flow: agent never merges into `main`; prod deploy also needs the `prod` Environment approval | [fix/flow.py](../src/pipeline_agent/fix/flow.py), [deploy.yml](../.github/workflows/deploy.yml) |
+| Fix flow: separate GitHub identity for the agent, so the human review is real (GitHub forbids self-approval). GitHub App with exact permissions, **no Workflows permission**, 1-hour tokens; private key outside the repo | [13-github-setup.md](13-github-setup.md#12-agent-identity-for-phase-3) |
+| GitHub reads retried on network errors and 5xx/429; writes never blindly retried (no duplicates) | [git/github.py](../src/pipeline_agent/git/github.py) |
+| GitHub token never in `repr`/logs | [git/github.py](../src/pipeline_agent/git/github.py) |
 
 ## Known gaps (tracked)
 - Redaction is pattern-based. Unusual secret formats can slip through. Plan: add an entropy-based detector, plus allowlist-based log extraction (send only the error lines) in Phase 2.

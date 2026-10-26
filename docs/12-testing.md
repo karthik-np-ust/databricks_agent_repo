@@ -42,6 +42,15 @@ Tests run with every `AGENT_*` variable removed (autouse fixture), so a develope
 - `python scripts/phase0_checks.py`: real Databricks and OpenRouter.
 - `AGENT_LLM_ENABLED=true pipeline-agent once` (twice, about 50 s apart) against the simulator: real diagnoses, visible in `pipeline-agent incidents --show 1` and `pipeline-agent llm`.
 
-## Latest local result (2026-10-25)
-- `pytest`: **97 passed**.
+## Fix flow tests ([tests/test_fix.py](../tests/test_fix.py), [tests/test_github_client.py](../tests/test_github_client.py))
+These use an in-memory fake GitHub (branches, commits, PRs, checks, deploy runs, human merge/close) and a fake LLM. They cover:
+- every patch guard
+- the full flow dev → qa → human gate → prod deploy → prod rerun → resolved, including that the agent never merges `main` and asks for approval only once
+- validation retry and no-valid-patch escalation
+- CI failure (PR comment, escalation), reviewer rejection, protected `qa` waiting for a human
+- deploy failure, timeout, dry run, the one-fix-at-a-time limit
+- GitHub client request shapes through `httpx.MockTransport`
+
+## Latest local result (2026-10-26)
+- `pytest`: **123 passed**.
 - `pytest sample_pipelines/tests`: **3 passed, 1 skipped** (Spark module skipped: no PySpark/Java on this machine).

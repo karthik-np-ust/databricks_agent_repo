@@ -2,6 +2,21 @@
 
 Newest first. Each entry: what was built, how it was verified, what's next.
 
+## 2026-10-26: Agent identity = GitHub App
+- The agent authenticates as GitHub App `pipeline-agent-karthik[bot]` (installed on the repo only): `AppTokenAuth` signs a JWT with the App key, gets a 1-hour installation token and renews it automatically. No second account or email was needed. The App has no Workflows permission.
+- Live check: `pipeline-agent github` → `Token user: pipeline-agent-karthik[bot]`, reads dev/qa/main.
+- The first live call hit a 30 s read timeout (corporate proxy). GitHub reads now retry with back-off; writes are not retried (no duplicates).
+- 125 tests pass.
+
+## 2026-10-26: Phase 3, fix flow
+- `git/github.py`: REST client (tree listing, file reads, single-commit multi-file changes through the Git Data API, PRs, merges, check runs with failure annotations, workflow runs). Token never in `repr`.
+- `fix/patch.py`: LLM writes whole-file fixes through a `propose_fix` tool. Guards: allowed paths, compiles, `assert_not_null(` count kept, test required, no secrets, limits, one retry with validation feedback.
+- `fix/flow.py`: persisted state machine `planned → pr_open/deploying (dev, qa, main) → verifying → resolved | failed | rejected`. Auto-merge only into dev/qa; `main` always needs a human. Prod rerun and verify after the prod deploy. Idempotent retries, `max_wait_hours` timeout, `max_concurrent=1`.
+- Monitor starts a fix after triage for fix-eligible incidents; each tick advances all fixes. CLI: `fixes [--history]`, `fix <incident>`, `github`.
+- Config: `config/fix.yaml`, free coding models in `config/llm.yaml` (`poolside/laguna-s-2.1:free` → nemotron-3-ultra → cohere north-mini-code).
+- Bugs found by tests and fixed before shipping: audit kwarg collision (`target`), duplicate-PR risk on retry.
+- 123 tests pass. **Live run pending:** needs the bot account + token (`GITHUB_TOKEN`), see 13-github-setup.md §12.
+
 ## 2026-10-26: First real fault + branch protection
 - dev/qa/prod deployed and smoke-tested through GitHub Actions. The agent sees 9 jobs. Deploy concurrency is now per branch (a shared group made GitHub cancel the pending dev run).
 - Branch protection: ruleset `protect-main-and-qa` (PR + Code Owner review + required checks `agent-tests`, `pipeline-tests`, `bundle-validate`, no force push/delete, admin bypass for the demo). Verified with test PR #1: all checks green, merge blocked pending review. Spark tests ran in CI for the first time and passed.

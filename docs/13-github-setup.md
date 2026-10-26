@@ -99,6 +99,60 @@ Actions → **demo-ops** → action `inject`, scenario `bad_cast`, env `prod`. T
 ```
 Reset afterwards with demo-ops action `reset`.
 
+## 12. Agent identity for Phase 3
+The agent opens and merges PRs, so it needs its **own** GitHub identity:
+- **The human gate depends on it.** GitHub doesn't let anyone approve their own PR. If the agent used your token, its PRs would be "yours" and you couldn't approve them.
+- **The audit trail stays clear.** Everything the agent does shows up under the bot's name.
+
+| Option | Effort | When |
+|---|---|---|
+| **GitHub App** (used for this demo since 2026-10-26) | 10 minutes | Recommended for everything: no extra account or email, exact permissions, 1-hour auto-renewed tokens |
+| Bot account (second GitHub user) | 10 minutes | Only if Apps aren't allowed. GitHub needs a different email per account. |
+
+### GitHub App steps (recommended)
+1. **Create:** your profile → Settings → Developer settings → GitHub Apps → **New GitHub App**.
+   - Name: e.g. `pipeline-agent-karthik`
+   - Homepage: the repo URL
+   - Webhook: **Active** unticked
+2. **Repository permissions** (everything else No access):
+   - Contents: **Read and write**
+   - Pull requests: **Read and write**
+   - Checks, Actions, Commit statuses: Read-only
+   - Metadata: Read-only
+   - **Workflows: No access.** GitHub then rejects any change to `.github/workflows/`.
+3. **Install scope:** Only on this account → **Create GitHub App**. Note the **App ID**.
+4. **Private key:** Private keys → **Generate a private key**. Move the `.pem` **outside the repo** (e.g. `C:\Users\<you>\.secrets\`) and delete the copy in Downloads.
+5. **Install App** → Only select repositories → the repo → Install. The URL ends in `/installations/<Installation ID>`.
+6. **`.env`:**
+   ```
+   GITHUB_APP_ID=<App ID>
+   GITHUB_APP_INSTALLATION_ID=<Installation ID>
+   GITHUB_APP_PRIVATE_KEY_PATH=C:\Users\<you>\.secrets\<file>.pem
+   ```
+7. **Repo variable:** `AGENT_BOT_LOGIN = <app-name>[bot]` (e.g. `pipeline-agent-karthik[bot]`). This turns on the CI path-guard for its PRs.
+8. **Check:** `pipeline-agent github` should print `Token user: pipeline-agent-karthik[bot]` and the branch heads.
+
+How it works: the agent signs a 9-minute JWT with the private key and exchanges it for a 1-hour installation token, which it renews 5 minutes before expiry ([git/github.py](../src/pipeline_agent/git/github.py) `AppTokenAuth`). The key never leaves the laptop or server, and neither the key nor the token appears in logs or `repr`.
+
+### Bot account steps (alternative)
+1. **Create the account.** Sign up at https://github.com/signup, e.g. `karthik-np-ust-bot`, with a different email.
+2. **Give it write access.** In the repo: Settings → Collaborators → **Add people** → the bot → role **Write**. Log in as the bot and accept the invitation.
+3. **Create its token.** As the bot: Settings → Developer settings → Personal access tokens → **Tokens (classic)** → Generate new token:
+   - Scope: **`public_repo`** only (or `repo` for a private repo).
+   - Do **not** tick `workflow`. Without it, GitHub itself refuses any change the token tries to make to `.github/workflows/`, which adds a layer on top of the path guard.
+   - Expiration: 30 days.
+   - (Fine-grained tokens can't reach another user's personal repo, which is why this uses a classic token.)
+4. **Local `.env`** (git-ignored): `GITHUB_TOKEN=<bot token>`
+5. **Repo variable** (Settings → Secrets and variables → Actions → Variables): `AGENT_BOT_LOGIN = karthik-np-ust-bot`. This turns on the CI **path-guard** for the bot's PRs.
+6. **qa merges:**
+   - The ruleset from step 9 requires a review on `qa` too, so the agent will wait for you to merge `dev → qa` as well as `qa → main` (two human gates).
+   - For one gate (prod only): create a second ruleset for `qa` with only **Require a pull request** (0 approvals) and **Require status checks**, and remove `qa` from `protect-main-and-qa`.
+7. **Check:** `pipeline-agent github` should print `Token user: karthik-np-ust-bot` and the branch heads.
+8. **Enable** in `.env`:
+   - `AGENT_LLM_ENABLED=true`
+   - `AGENT_FIX_ENABLED=true`
+   - `AGENT_DRY_RUN=false` if you want the agent to rerun prod after the fix is deployed. In dry run the fix is still promoted, but the final rerun is skipped and you verify manually.
+
 ## Troubleshooting
 | Symptom | Fix |
 |---|---|

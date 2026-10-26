@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import AliasChoices, BaseModel, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .sdk.models import Env
@@ -37,6 +37,19 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://openrouter.ai/api/v1"
     llm_api_key_ref: str = "env://OPENROUTER_API_KEY"
     llm_timeout_seconds: float = 90.0
+    # Fix flow (Phase 3). Off by default; needs LLM + a GitHub token for the agent's identity.
+    fix_enabled: bool = False
+    github_api_url: str = "https://api.github.com"
+    # Preferred identity: a GitHub App (no extra account, 1-hour tokens, exact permissions).
+    github_app_id: str | None = Field(None, validation_alias=AliasChoices("GITHUB_APP_ID", "AGENT_GITHUB_APP_ID"))
+    github_app_installation_id: str | None = Field(
+        None, validation_alias=AliasChoices("GITHUB_APP_INSTALLATION_ID", "AGENT_GITHUB_APP_INSTALLATION_ID")
+    )
+    github_app_private_key_path: Path | None = Field(
+        None, validation_alias=AliasChoices("GITHUB_APP_PRIVATE_KEY_PATH", "AGENT_GITHUB_APP_PRIVATE_KEY_PATH")
+    )
+    # Fallback identity: a bot account's token.
+    github_token_ref: str = "env://GITHUB_TOKEN"
 
 
 class PlatformConfig(BaseModel):
@@ -91,9 +104,29 @@ class LlmConfig(BaseModel):
     triage_models: list[str] = Field(default_factory=list)
     fix_models: list[str] = Field(default_factory=list)
     max_tokens: int = 1500
+    fix_max_tokens: int = 12000
     temperature: float = 0.1
     # Characters of (redacted) error text sent to the model.
     max_context_chars: int = 12_000
+
+
+class FixConfig(BaseModel):
+    repo: str | None = None
+    base_branch: str = "main"
+    promotion: list[str] = Field(default_factory=lambda: ["dev", "qa", "main"])
+    auto_merge: list[str] = Field(default_factory=lambda: ["dev", "qa"])
+    deploy_workflow: str = "deploy.yml"
+    required_checks: list[str] = Field(default_factory=list)
+    allowed_paths: list[str] = Field(default_factory=list)
+    context_paths: list[str] = Field(default_factory=list)
+    protected_patterns: list[str] = Field(default_factory=list)
+    require_test_change: bool = True
+    max_files: int = 6
+    max_file_chars: int = 40_000
+    max_context_chars: int = 60_000
+    patch_attempts: int = 2
+    max_concurrent: int = 1
+    max_wait_hours: float = 48
 
 
 class AgentConfig(BaseModel):
@@ -103,6 +136,7 @@ class AgentConfig(BaseModel):
     circuit_breaker: CircuitBreaker = Field(default_factory=CircuitBreaker)
     budgets: Budgets = Field(default_factory=Budgets)
     llm: LlmConfig = Field(default_factory=LlmConfig)
+    fix: FixConfig = Field(default_factory=FixConfig)
 
     def policy_for(self, platform_id: str, pipeline_name: str) -> PipelinePolicy:
         for policy in self.policies:
@@ -125,6 +159,7 @@ def load_agent_config(config_dir: Path) -> AgentConfig:
     pipelines = _read_yaml(config_dir / "pipelines.yaml")
     budgets = _read_yaml(config_dir / "budgets.yaml")
     llm = _read_yaml(config_dir / "llm.yaml")
+    fix = _read_yaml(config_dir / "fix.yaml")
     return AgentConfig.model_validate(
         {
             "platforms": platforms.get("platforms", []),
@@ -133,5 +168,6 @@ def load_agent_config(config_dir: Path) -> AgentConfig:
             "circuit_breaker": pipelines.get("circuit_breaker", {}),
             "budgets": budgets.get("budgets", {}),
             "llm": llm.get("llm", {}),
+            "fix": fix.get("fix", {}),
         }
     )

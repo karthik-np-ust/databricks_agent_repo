@@ -20,6 +20,10 @@ Configuration lives in two places:
 | `AGENT_LLM_BASE_URL` | `https://openrouter.ai/api/v1` | Any OpenAI-compatible endpoint (approved provider or LiteLLM proxy later) |
 | `AGENT_LLM_API_KEY_REF` | `env://OPENROUTER_API_KEY` | Secret reference for the LLM key |
 | `AGENT_LLM_TIMEOUT_SECONDS` | `90` | Per request |
+| `AGENT_FIX_ENABLED` | `false` | Phase 3 fix flow (needs `AGENT_LLM_ENABLED=true`) |
+| `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_PRIVATE_KEY_PATH` | unset | **Preferred identity:** GitHub App (used when `GITHUB_APP_ID` is set) |
+| `AGENT_GITHUB_TOKEN_REF` | `env://GITHUB_TOKEN` | Fallback identity: a bot account's token |
+| `AGENT_GITHUB_API_URL` | `https://api.github.com` | GitHub Enterprise Server: `https://<host>/api/v3` |
 
 The CLI loads `.env` from the working directory into the environment (real environment variables win), so `env://` references such as `env://DATABRICKS_TOKEN` resolve from `.env` too.
 
@@ -92,3 +96,21 @@ Failed attempts count too. When a cap is hit, the incident is escalated and the 
 | `fix_models` | Phase 3 |
 | `max_tokens`, `temperature` | Per call |
 | `max_context_chars` | Tail of the (redacted) error text sent to the model |
+
+## `config/fix.yaml` (Phase 3)
+| Field | Default (repo file) | Meaning |
+|---|---|---|
+| `repo` | `karthik-np-ust/databricks_agent_repo` | Repo the agent reads and opens PRs against |
+| `base_branch` | `main` | Code the fix starts from (what failed in prod) |
+| `promotion` | `[dev, qa, main]` | PR targets in order; the **last one is the human gate** (never merged by the agent) |
+| `auto_merge` | `[dev, qa]` | Branches the agent may merge once checks are green (if branch rules allow) |
+| `deploy_workflow` | `deploy.yml` | Its run for the merge commit must succeed before promoting |
+| `required_checks` | `agent-tests, pipeline-tests, bundle-validate` | Must be green on each PR |
+| `allowed_paths` | `sample_pipelines/src/`, `sample_pipelines/tests/` | The only paths a fix may change (CI path-guard enforces the same rule) |
+| `context_paths` | bundle YAML files | Read-only context for the model |
+| `protected_patterns` | `assert_not_null(` | Count per file may not decrease (no deleting data-quality checks) |
+| `require_test_change` | `true` | A test under `tests/` must be added or changed |
+| `max_files`, `max_file_chars`, `max_context_chars` | 6 / 40000 / 60000 | Limits |
+| `patch_attempts` | 2 | 1 retry with validation errors fed back |
+| `max_concurrent` | 1 | Fixes in flight at once |
+| `max_wait_hours` | 48 | Waiting longer than this in any state → failed, incident escalated |
