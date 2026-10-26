@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from typing import Callable
 
 from .config import AgentConfig, Settings
+from .llm.context import condense_logs
 from .llm.gateway import BudgetExceeded
 from .llm.triage import Diagnosis, Triage
 from .notify.webhook import Notification, Notifier, Severity
@@ -173,7 +174,7 @@ class Monitor:
             self.notifier.send(Notification("Pipeline over threshold: needs a human", run.pipeline_name, Severity.CRITICAL, facts, run.url))
             return
 
-        message = redact(ctx.full_text() if ctx else "").text[:4000]
+        message = condense_logs(redact(ctx.full_text() if ctx else "").text, 4000)
         status = "open" if d.action == ActionType.OPEN_INCIDENT else "escalated"
         incident = self.store.create_incident(
             run,

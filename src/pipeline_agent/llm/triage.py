@@ -19,9 +19,10 @@ from typing import Literal
 from pydantic import BaseModel, Field, ValidationError
 
 from ..sdk.models import ErrorClass
+from .context import condense_logs
 from .gateway import LLMGateway, LLMResult
 
-PROMPT_VERSION = "triage-v1"
+PROMPT_VERSION = "triage-v2"
 
 SYSTEM_PROMPT = """You are a senior production-support engineer for data pipelines (Databricks, Snowflake, Airflow, dbt).
 You diagnose why a pipeline run failed and propose the smallest safe fix.
@@ -34,6 +35,7 @@ Rules:
 - Classify: transient (retry fixes it), code (code or data-handling bug), infra (permission,
   secret, quota, configuration outside the code), unknown.
 - Be concrete: name the task, file, column or value involved when the logs show it.
+  Quote the actual error message (not stack frames) as evidence.
 - Answer only by calling the report_diagnosis tool once."""
 
 DIAGNOSIS_TOOL = {
@@ -114,7 +116,7 @@ class Triage:
         matched_rule: str | None,
     ) -> Diagnosis:
         cfg = self.gateway.config
-        clipped = error_text[-cfg.max_context_chars:]
+        clipped = condense_logs(error_text, cfg.max_context_chars)
         user = (
             f"Platform: {platform}\nPipeline: {pipeline}\nEnvironment: {env}\n"
             f"Rule-based pre-classification: {rule_class} (rule: {matched_rule or 'none'})\n\n"

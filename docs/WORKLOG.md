@@ -2,6 +2,16 @@
 
 Newest first. Each entry: what was built, how it was verified, what's next.
 
+## 2026-10-26: First real fault + branch protection
+- dev/qa/prod deployed and smoke-tested through GitHub Actions. The agent sees 9 jobs. Deploy concurrency is now per branch (a shared group made GitHub cancel the pending dev run).
+- Branch protection: ruleset `protect-main-and-qa` (PR + Code Owner review + required checks `agent-tests`, `pipeline-tests`, `bundle-validate`, no force push/delete, admin bypass for the demo). Verified with test PR #1: all checks green, merge blocked pending review. Spark tests ran in CI for the first time and passed.
+- **Fault `bad_cast` in prod (demo-ops inject) handled end-to-end by the agent:** failed run detected, `code`/`cast_invalid_input`, incident #1 fix-eligible, LLM diagnosis.
+- The real failure exposed three quality issues, now fixed:
+  1. The LLM got the *tail* of a huge JVM stack trace. New `llm/context.condense_logs` keeps messages, 5 frames per block, de-duplicates, and truncates head-first. Diagnosis confidence went from 72% to 95%, it now names `transform_silver` and `'abc'`, and tokens dropped from 5,265 to 2,026.
+  2. 15-digit Databricks run IDs were redacted as "card numbers" in notifications. Agent-owned facts (`TRUSTED_FACTS`) are no longer redacted; free text still is.
+  3. The incident headline was Databricks' generic "Workload failed…". The plugin now leads with the failed task's real error.
+- Tests: 99 pass.
+
 ## 2026-10-26: GitHub deploy path live
 - Repo `karthik-np-ust/databricks_agent_repo` (public). demo-ops `setup` succeeded from GitHub (catalogs, schemas, volumes, secrets, clean data in dev/qa/prod).
 - Deploy workflow: the first prod deploy failed (most likely secrets not yet set); after adding `bundle validate` and failure annotations, prod deployed successfully. The agent sees the 3 prod jobs.

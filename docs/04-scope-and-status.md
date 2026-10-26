@@ -58,9 +58,9 @@ JSON API calls work: monitoring, SQL, secrets, jobs, cancel/rerun. Binary upload
 |---|---|
 | Core, simulator, LLM | 97 automated tests + live CLI runs (simulator + real OpenRouter) |
 | Databricks plugin | Fake-client tests, plus a live `check` against the real workspace and a live billing-table cost query |
-| Real job monitoring end-to-end | **Not yet:** demo jobs aren't deployed (upload block) |
-| Bundle deploy (CLI or `deploy_sdk.py`) | **Not yet:** CLI unavailable locally; `deploy_sdk.py` written but not run (needs workspace uploads) |
-| Sample pipeline Spark tests | Skipped locally (no Java); run in CI |
+| Real job monitoring end-to-end | ✅ 2026-10-26: fault `bad_cast` injected in prod from GitHub. The agent detected the failed run, classified it `code`/`cast_invalid_input`, opened incident #1 (fix-eligible) and got an LLM diagnosis naming `transform_silver` and the value `'abc'` (95% confidence). The old dev failure was handled as notify-only. |
+| Bundle deploy | ✅ through GitHub Actions (`deploy.yml`) for dev, qa and prod, including smoke runs. `deploy_sdk.py` is still not run (local uploads blocked). |
+| Sample pipeline Spark tests | ✅ pass in CI (`pipeline-tests`, PR #1); skipped locally (no Java) |
 | Docker image / compose | Not built (no Docker on this machine) |
 
 ## Deviations from the approved plan (and why)

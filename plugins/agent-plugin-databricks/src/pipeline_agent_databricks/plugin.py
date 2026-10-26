@@ -210,7 +210,13 @@ class DatabricksBackend:
             except Exception as exc:  # output can be unavailable (e.g. expired); keep what we have
                 trace = f"(run output unavailable: {exc})"
             tasks.append(TaskFailure(task_key=task.task_key, error_message=error, error_trace=self._clip(trace), logs=self._clip(logs)))
-        message = (detail.state.state_message if detail.state else None) or (tasks[0].error_message if tasks else "Run failed")
+        # The run-level state message is generic ("Task x failed ... see run output");
+        # the failed task's own error is the useful headline.
+        state_message = (detail.state.state_message if detail.state else None) or ""
+        task_error = next((t.error_message for t in tasks if t.error_message), "")
+        message = task_error or state_message or "Run failed"
+        if task_error and state_message:
+            message = f"{task_error}\n({state_message})"
         ctx = FailureContext(run=run, error_message=message, tasks=tasks)
         ctx.error_class, ctx.matched_rule = self.classifier.classify(ctx.full_text())
         return ctx
