@@ -103,7 +103,7 @@ class LlmConfig(BaseModel):
     # Tried in order; the next one is used when a model errors or is rate limited.
     triage_models: list[str] = Field(default_factory=list)
     fix_models: list[str] = Field(default_factory=list)
-    max_tokens: int = 1500
+    max_tokens: int = 4000
     fix_max_tokens: int = 12000
     temperature: float = 0.1
     # Characters of (redacted) error text sent to the model.
@@ -125,6 +125,7 @@ class FixConfig(BaseModel):
     max_file_chars: int = 40_000
     max_context_chars: int = 60_000
     patch_attempts: int = 2
+    repair_attempts: int = 2  # new commits on the fix PR after CI failures, fed with the CI log
     max_concurrent: int = 1
     max_wait_hours: float = 48
 

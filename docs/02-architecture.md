@@ -104,7 +104,8 @@ DEPLOYING(qa) ─ deploy green → PR qa → main
 PR_OPEN(main) ─ checks green → "Approval needed" notification; the agent NEVER merges this
               ─ human merges ─► DEPLOYING(main) ─ prod deploy (prod Environment approval) green
               ─► rerun prod job ─► VERIFYING ─ rerun succeeded ─► RESOLVED (incident resolved)
-Any CI or deploy failure → FAILED (PR comment with failures). PR closed unmerged → REJECTED.
+CI failure on the fix PR → REPAIR: read the CI job log, LLM fixes, new commit on the same PR (max repair_attempts)
+Repairs exhausted, or a failing promotion/deploy → FAILED (PR comment with failures). PR closed unmerged → REJECTED.
 No progress for max_wait_hours → FAILED. All three escalate the incident.
 ```
 
@@ -118,7 +119,9 @@ No progress for max_wait_hours → FAILED. All three escalate the incident.
 - no secrets
 - file count and size limits
 
-The model gets one retry with the validation errors fed back.
+The model gets one retry with the validation errors fed back. Guards also run **pyflakes** for undefined names (e.g. a test using `F` without importing it).
+
+**Self-repair:** when CI fails on the fix PR, the agent downloads the failed job's log (GitHub App: Actions read). It keeps the failure lines (`E …`, `FAILED …`, the summary) and sends them to the model with the branch's current files. The model's corrected files are pushed as a new commit on the same PR, with a PR comment explaining what was fixed. The guards check the **combined** change against `main`, so a repair can't do what the first fix wasn't allowed to do (e.g. delete a DQ check).
 
 **Idempotency:** branch creation moves an existing branch, and PR creation reuses an open PR. A step that fails mid-way (network) is retried on the next tick without duplicates.
 

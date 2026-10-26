@@ -16,3 +16,6 @@ agent_state.db
 
 # local tool downloads
 .tools/
+
+# local demo config override (AGENT_CONFIG_DIR)
+config.local/

@@ -14,8 +14,9 @@ from pipeline_agent.llm import LLMGateway, Triage
 
 SRC = "sample_pipelines/src/transform_silver.py"
 TEST = "sample_pipelines/tests/test_transforms.py"
-ORIGINAL_SRC = 'from common.dq import assert_not_null\n\ndef clean(df):\n    assert_not_null(df, ["order_id"])\n    return df.select(F.col("qty").cast("int"))\n'
-FIXED_SRC = 'from common.dq import assert_not_null\n\ndef clean(df):\n    assert_not_null(df, ["order_id"])\n    return df.select(F.expr("try_cast(qty AS INT)"))\n'
+_IMPORTS = "from pyspark.sql import functions as F\nfrom common.dq import assert_not_null\n"
+ORIGINAL_SRC = _IMPORTS + '\ndef clean(df):\n    assert_not_null(df, ["order_id"])\n    return df.select(F.col("qty").cast("int"))\n'
+FIXED_SRC = _IMPORTS + '\ndef clean(df):\n    assert_not_null(df, ["order_id"])\n    return df.select(F.expr("try_cast(qty AS INT)"))\n'
 ORIGINAL_TEST = "def test_ok():\n    assert True\n"
 FIXED_TEST = ORIGINAL_TEST + "\ndef test_bad_qty_is_null():\n    assert True\n"
 
@@ -63,6 +64,13 @@ def test_valid_fix_passes():
 )
 def test_guards_reject_bad_fixes(files, expected):
     assert any(expected in e for e in errors_for(files)), errors_for(files)
+
+
+def test_guard_catches_undefined_name_like_missing_F_import():
+    # Real case 2026-10-26: the agent's test used F without importing it.
+    test = ORIGINAL_TEST + "\ndef test_bad():\n    assert F.col('qty') is not None\n"
+    errors = errors_for([{"path": SRC, "content": FIXED_SRC}, {"path": TEST, "content": test}])
+    assert any("undefined name 'F'" in e for e in errors), errors
 
 
 # fakes ------------------------------------------------------------------------------
@@ -237,6 +245,24 @@ def test_full_flow_dev_qa_human_gate_prod_rerun_resolved(setup, clock, store):
         assert expected in actions
 
 
+def test_unusable_diagnosis_does_not_block_fix(setup, clock, store, monkeypatch):
+    # Real case 2026-10-26: the free model returned no usable diagnosis (fix_type "unknown").
+    # The rule class (code, fix-eligible) must still start the fix flow.
+    monitor, _, repo, llm, _ = setup()
+    monkeypatch.setitem(DIAG, "fix_type", "unknown")
+    monitor.tick()
+    tick(monitor, clock)
+    assert fix_state(store) == "pr_open" and repo.prs[1]["base"] == "dev"
+
+
+def test_llm_saying_rerun_vetoes_fix(setup, clock, store, monkeypatch):
+    monitor, _, repo, _, _ = setup()
+    monkeypatch.setitem(DIAG, "fix_type", "rerun")
+    monitor.tick()
+    tick(monitor, clock)
+    assert store.list_fixes() == [] and repo.prs == {}
+
+
 def test_invalid_patch_gets_one_retry(setup, clock, store):
     bad = proposal([{"path": SRC, "content": "def clean(df):\n    return df\n"}, {"path": TEST, "content": FIXED_TEST}])
     monitor, _, repo, llm, _ = setup(fixes=[bad, proposal()])
@@ -254,15 +280,49 @@ def test_no_valid_patch_escalates(setup, clock, store):
     assert repo.prs == {} and store.list_incidents()[0].status == "escalated"
 
 
-def test_ci_failure_comments_and_escalates(setup, clock, store):
-    monitor, _, repo, _, _ = setup()
+REPAIRED_SRC = FIXED_SRC.replace("try_cast(qty AS INT)", "try_cast(qty AS INT)  ")  # any real change
+
+
+def test_ci_failure_triggers_repair_then_green(setup, clock, store):
+    """CI fails -> agent reads the failure, pushes a repair commit to the same PR, CI green -> continues."""
+    repaired = proposal([{"path": SRC, "content": REPAIRED_SRC}])  # only src changes; the test stays from attempt 1
+    monitor, _, repo, llm, _ = setup(fixes=[proposal(), repaired])
+    repo.check_state = "failure"
+    monitor.tick()
+    tick(monitor, clock)  # PR opened
+    first_head = repo.branches["fix/incident-1"]
+    tick(monitor, clock)  # CI red -> repair
+    assert fix_state(store) == "pr_open" and llm.fix_calls == 2
+    assert repo.branches["fix/incident-1"] != first_head, "repair pushed a new commit"
+    assert repo.files[repo.branches["fix/incident-1"]][TEST] == FIXED_TEST, "earlier test kept"
+    assert "repair attempt 1/2" in repo.comments[-1][1] and "test_bad_qty_is_null failed" in repo.comments[-1][1]
+    repo.check_state = "success"
+    tick(monitor, clock)
+    assert fix_state(store) == "deploying", "repaired fix proceeds normally"
+    assert "fix_repaired" in [r.action for r in store.list_audit()]
+
+
+def test_repair_attempts_exhausted_escalates(setup, clock, store):
+    r1 = proposal([{"path": SRC, "content": REPAIRED_SRC}])
+    r2 = proposal([{"path": SRC, "content": REPAIRED_SRC + "\n"}])
+    monitor, _, repo, _, _ = setup(fixes=[proposal(), r1, r2])
+    repo.check_state = "failure"
+    monitor.tick()
+    for _ in range(4):  # open, repair 1, repair 2, give up
+        tick(monitor, clock)
+    assert fix_state(store) == "failed" and "handing over to a human" in repo.comments[-1][1]
+    assert repo.prs[1]["state"] == "open", "the PR stays open for a human"
+
+
+def test_repair_cannot_remove_dq_check(setup, clock, store):
+    sneaky = proposal([{"path": SRC, "content": "def clean(df):\n    return df\n"}])
+    monitor, _, repo, _, _ = setup(fixes=[proposal(), sneaky, sneaky])
     repo.check_state = "failure"
     monitor.tick()
     tick(monitor, clock)
     tick(monitor, clock)
-    assert fix_state(store) == "failed"
-    assert repo.comments and "test_bad_qty_is_null failed" in repo.comments[0][1]
-    assert repo.prs[1]["state"] == "open", "the PR stays open for a human"
+    fix = store.list_fixes()[0]
+    assert fix.state == "failed" and "removes protected check" in fix.error
 
 
 def test_reviewer_rejects_final_pr(setup, clock, store):

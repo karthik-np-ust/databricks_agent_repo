@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from ..sdk.models import ErrorClass
 from .context import condense_logs
-from .gateway import LLMGateway, LLMResult
+from .gateway import LLMGateway, LLMResult, LLMUnavailable
 
 PROMPT_VERSION = "triage-v2"
 
@@ -122,25 +122,35 @@ class Triage:
             f"Rule-based pre-classification: {rule_class} (rule: {matched_rule or 'none'})\n\n"
             f"<untrusted_logs>\n{clipped}\n</untrusted_logs>"
         )
-        result = self.gateway.chat(
-            [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user}],
-            purpose="triage",
-            models=cfg.triage_models,
-            incident_id=incident_id,
-            tools=[DIAGNOSIS_TOOL],
-        )
-        data = _parse(result)
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user}]
         heuristic = looks_like_injection(error_text)
-        try:
-            diag = Diagnosis.model_validate({**(data or {}), "model": result.model})
-        except ValidationError:
-            diag = Diagnosis(
-                summary="LLM returned an unusable diagnosis",
-                root_cause=(result.content or "")[:500] or "no content",
-                error_class=ErrorClass(rule_class) if rule_class in ErrorClass._value2member_map_ else ErrorClass.UNKNOWN,
-                confidence=0.0,
-                suggested_fix="Review the logs manually.",
-                model=result.model,
-            )
-        diag.suspicious_content = diag.suspicious_content or heuristic
-        return diag
+        # Try models one by one: an answer that is truncated (reasoning models can
+        # spend the whole budget thinking) or doesn't match the schema moves on
+        # to the next model, just like an API error does.
+        last_result, unavailable = None, None
+        for model in cfg.triage_models:
+            try:
+                result = self.gateway.chat(
+                    messages, purpose="triage", models=[model], incident_id=incident_id, tools=[DIAGNOSIS_TOOL]
+                )
+            except LLMUnavailable as exc:
+                unavailable = exc
+                continue
+            last_result = result
+            try:
+                diag = Diagnosis.model_validate({**(_parse(result) or {}), "model": result.model})
+            except ValidationError:
+                continue
+            diag.suspicious_content = diag.suspicious_content or heuristic
+            return diag
+        if last_result is None:
+            raise unavailable or LLMUnavailable("no triage models configured")
+        return Diagnosis(
+            summary="LLM returned an unusable diagnosis",
+            root_cause=(last_result.content or "")[:500] or "no content (answer truncated or not in the expected format)",
+            error_class=ErrorClass(rule_class) if rule_class in ErrorClass._value2member_map_ else ErrorClass.UNKNOWN,
+            confidence=0.0,
+            suggested_fix="Review the logs manually.",
+            model=last_result.model,
+            suspicious_content=heuristic,
+        )

@@ -2,6 +2,25 @@
 
 Newest first. Each entry: what was built, how it was verified, what's next.
 
+## 2026-10-26: First live fix run → self-repair
+**What happened (fault `bad_cast` in prod, fix flow on):**
+- Detection and incident worked. The first triage was **unusable**: the reasoning model spent its 1,500 output tokens thinking, so fix_type was `unknown` and no fix started. Fixed: `max_tokens` 4000, triage falls through to the next model on an unusable answer, and the **rule class starts the fix** (the LLM can only veto with `rerun`/`config_or_permission`).
+- Two agent processes ran at once (one started from the session, one by hand). Stopped one; only one agent may run (a leader lock is on the roadmap).
+- Fix #1: the first coding model timed out, and the fallback wrote a sensible approach (`try_cast` + quarantine table, kept `assert_not_null`, added a fixture and test). It opened **PR #4** as `pipeline-agent-karthik[bot]`; path-guard ran and passed.
+- **CI rejected it**, correctly:
+  - `AttributeError: module 'pyspark.sql.functions' has no attribute 'try_cast'` (not in PySpark 3.5)
+  - the test used `F` without importing it
+  - the fault-kit test needed its target text exactly once
+- CI annotations only said "exit code 1", so the agent couldn't learn why.
+
+**Improvements:**
+- `GitHubClient.checks` reads the failed **job log** (App has Actions read) and keeps the failure lines.
+- **Self-repair:** on CI failure the fix flow feeds the CI output to the model and pushes a corrected commit to the same PR (max 2), validated as the combined change vs `main`.
+- **pyflakes guard** for undefined names before commit.
+- Prompt `fix-v2`: PySpark 3.5 APIs only (`F.expr("try_cast(...)")`), logic in testable functions, no dead code, import what tests use.
+- Fault-kit test no longer blocks valid fixes (skips if a fault's target moved).
+- 132 tests pass.
+
 ## 2026-10-26: Agent identity = GitHub App
 - The agent authenticates as GitHub App `pipeline-agent-karthik[bot]` (installed on the repo only): `AppTokenAuth` signs a JWT with the App key, gets a 1-hour installation token and renews it automatically. No second account or email was needed. The App has no Workflows permission.
 - Live check: `pipeline-agent github` → `Token user: pipeline-agent-karthik[bot]`, reads dev/qa/main.

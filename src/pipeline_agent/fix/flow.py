@@ -157,6 +157,10 @@ class FixFlow:
 
         checks = self.repo.checks(pr.head_sha, self.cfg.required_checks)
         if checks.state == "failure":
+            repairs = sum(1 for h in fix.history or [] if (h.get("note") or "").startswith("repair attempt"))
+            # Only the agent's own fix PR is repaired; a failing promotion PR means something else broke.
+            if fix.stage == 0 and repairs < self.cfg.repair_attempts:
+                return self._repair(fix, pr, checks.failures, repairs + 1)
             self.repo.comment(pr.number, "pipeline-agent: required checks failed, handing over to a human.\n\n```\n" + "\n".join(checks.failures)[:3000] + "\n```")
             return self._fail(fix, f"CI failed on PR #{pr.number}: " + "; ".join(checks.failures)[:500])
         if checks.state != "success":
@@ -181,6 +185,36 @@ class FixFlow:
             if not any(h.get("note") == "merge blocked" for h in fix.history or []):
                 self.store.update_fix(fix.id, now=self.clock(), note="merge blocked")
                 self.audit.log("fix_merge_blocked", f"fix:{fix.id}", pr=pr.url, reason="branch rules require a human")
+        return fix.state
+
+    def _repair(self, fix: FixAttemptRow, pr, failures: list[str], attempt: int) -> str:
+        """CI failed on the fix PR: feed the CI output back to the model and push a corrected commit."""
+        incident = self.store.get_incident(fix.incident_id)
+        head = self.repo.branch_sha(fix.branch)
+        branch_ctx = self._code_context(head)
+        baseline = self._code_context(self.repo.branch_sha(self.cfg.base_branch))
+        carry = {p: c for p, c in branch_ctx.files.items() if baseline.files.get(p) != c and p not in baseline.readonly_paths}
+        try:
+            proposal, errors = self.writer.propose(
+                incident, incident.error_message, branch_ctx, self.fix_models,
+                ci_failures=failures, baseline=baseline, carry=carry,
+            )
+        except BudgetExceeded as exc:
+            return self._fail(fix, f"LLM budget reached while repairing the fix: {exc}")
+        if proposal is None:
+            self.repo.comment(pr.number, "pipeline-agent: CI failed and no valid repair was found, handing over to a human.\n\n- " + "\n- ".join(errors)[:2000])
+            return self._fail(fix, f"repair attempt {attempt} produced no valid change: " + "; ".join(errors)[:600])
+        files = {f.path: f.content for f in proposal.files}
+        commit = self.repo.commit_files(head, fix.branch, files, f"fix: repair attempt {attempt} after CI failure\n\n{proposal.summary[:500]}")
+        excerpt = "\n".join(failures)[:2500]
+        self.repo.comment(
+            pr.number,
+            f"pipeline-agent: CI failed, so I pushed **repair attempt {attempt}/{self.cfg.repair_attempts}**.\n\n"
+            f"**What I changed:** {proposal.summary}\n\n<details><summary>CI output I fixed</summary>\n\n```\n{excerpt}\n```\n</details>",
+        )
+        record = {**(fix.proposal or {}), "repairs": attempt, "last_repair": proposal.summary, "files": sorted({*(fix.proposal or {}).get("files", []), *files})}
+        self.store.update_fix(fix.id, now=self.clock(), commit_sha=commit, proposal=record, note=f"repair attempt {attempt}: {proposal.summary[:200]}")
+        self.audit.log("fix_repaired", f"fix:{fix.id}", attempt=attempt, pr=pr.url, files=sorted(files), model=proposal.model)
         return fix.state
 
     def _deploying(self, fix: FixAttemptRow) -> str:

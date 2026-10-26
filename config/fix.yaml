@@ -19,5 +19,6 @@ fix:
   max_file_chars: 40000
   max_context_chars: 60000
   patch_attempts: 2              # 1 retry with the validation errors fed back
+  repair_attempts: 2             # after a CI failure: read the CI log, push a corrected commit (max 2)
   max_concurrent: 1              # Free Edition: one fix in flight at a time
   max_wait_hours: 48             # any waiting state older than this -> failed (escalate)

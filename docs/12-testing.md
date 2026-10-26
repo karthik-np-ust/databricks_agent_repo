@@ -52,5 +52,5 @@ These use an in-memory fake GitHub (branches, commits, PRs, checks, deploy runs,
 - GitHub client request shapes through `httpx.MockTransport`
 
 ## Latest local result (2026-10-26)
-- `pytest`: **123 passed**.
+- `pytest`: **132 passed**.
 - `pytest sample_pipelines/tests`: **3 passed, 1 skipped** (Spark module skipped: no PySpark/Java on this machine).
