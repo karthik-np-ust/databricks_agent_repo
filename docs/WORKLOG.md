@@ -2,6 +2,21 @@
 
 Newest first. Each entry: what was built, how it was verified, what's next.
 
+## 2026-10-26: Self-repair worked; an untested path failed in dev; a manual merge reached prod
+**What happened**
+1. **Repair:** the agent repaired PR #4 from the CI log, CI went green, and it **merged into dev itself**.
+2. **Dev smoke run failed:** `main()` still used `F.try_cast` (PySpark 3.5 has no such function). The repair had only fixed `clean_orders()`, which the CI log pointed at, and `main()` has no unit test. The agent stopped and escalated; nothing went to qa or prod.
+3. **Manual merge to prod:** PR #7 (`dev → main`) was then merged by hand with admin bypass, which **deployed the broken code to prod**. Revert prepared on branch `fix/revert-broken-prod`.
+
+**Improvements (branch `feat/deploy-repair`)**
+- **Repair after a dev deploy failure:** reads the failed deploy job's output (`workflow_failure`), commits a correction on the fix branch and opens a follow-up PR → dev. Shares the 2-attempt repair budget.
+- **`forbidden_patterns`** (platform knowledge in `config/fix.yaml`): `F.try_cast(` and `.try_cast(` are rejected before commit, with the hint `F.expr("try_cast(col AS INT)")`.
+- **Repair prompt:** "fix the same mistake everywhere, including `main()`; untested paths run in the smoke test".
+- **ANSI colour codes stripped** from Databricks traces (also when the ESC byte is lost).
+- **CI `promotion-path` check:** pipeline code into `main` must come from `qa`, into `qa` from `dev`. Add it to the required checks.
+- **Console:** lifecycle step details are cut to one line, with the full text on hover (the failure URL overlapped the steps).
+- 148 tests pass; the real failed deploy run is now read correctly (clean trace pointing at `main()`, line 74).
+
 ## 2026-10-26: Phase 4, Pipeline Ops Console
 - **API** (`pipeline_agent/api`, FastAPI):
   - 15 read views + 6 audited actions (cancel, rerun, re-run diagnosis, start fix, take over, runtime controls)

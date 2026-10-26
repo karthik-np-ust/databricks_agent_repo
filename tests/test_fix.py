@@ -150,6 +150,9 @@ class FakeRepo:
     def workflow_run(self, workflow, branch, sha):
         return self.runs.get((branch, sha))
 
+    def workflow_failure(self, run_id):
+        return ["deploy: AttributeError: module 'pyspark.sql.functions' has no attribute 'try_cast' (main(), line 74)"]
+
 
 DIAG = {
     "summary": "qty 'abc' breaks cast", "root_cause": "strict cast", "error_class": "code", "confidence": 0.9,
@@ -347,16 +350,64 @@ def test_protected_qa_waits_for_human_merge(setup, clock, store):
     assert fix_state(store) == "deploying"
 
 
-def test_deploy_failure_fails_fix(setup, clock, store):
+def test_dev_deploy_failure_triggers_repair_pr(setup, clock, store):
+    """Real case 2026-10-26: CI green, but main() (untested) crashed in the dev smoke run.
+    The agent reads the smoke-run error, commits a repair and opens a follow-up PR to dev."""
+    repaired = proposal([{"path": SRC, "content": REPAIRED_SRC}])
+    repo = FakeRepo()
+    repo.auto_deploy = False
+    monitor, _, repo, llm, _ = setup(repo=repo, fixes=[proposal(), repaired])
+    monitor.tick()
+    tick(monitor, clock)
+    tick(monitor, clock)  # merged into dev (m1), waiting for deploy
+    repo.runs[("dev", "m1")] = WorkflowRun(9, "completed", "failure", "https://gh/run/9")
+    tick(monitor, clock)
+    fix = store.list_fixes()[0]
+    assert fix.state == "pr_open" and fix.stage == 0 and llm.fix_calls == 2
+    follow_up = repo.prs[fix.pr_number]
+    assert follow_up["base"] == "dev" and fix.pr_number != 1 and "deploy smoke run" in follow_up["body"]
+    assert "try_cast" in follow_up["body"], "the smoke-run error is in the PR"
+    repo.auto_deploy = True
+    tick(monitor, clock)  # follow-up CI green -> merged into dev -> deploy ok
+    tick(monitor, clock)
+    assert fix_state(store) == "pr_open" and store.list_fixes()[0].stage == 1, "promoted to qa after the repair"
+
+
+def test_deploy_failure_after_repairs_exhausted_fails(setup, clock, store):
     repo = FakeRepo()
     repo.auto_deploy = False
     monitor, _, repo, _, _ = setup(repo=repo)
     monitor.tick()
     tick(monitor, clock)
-    tick(monitor, clock)  # merged into dev, waiting for deploy run
+    tick(monitor, clock)
+    fix = store.list_fixes()[0]
+    for n in (1, 2):  # pretend both repairs were already used
+        store.update_fix(fix.id, note=f"repair attempt {n} (CI): x")
     repo.runs[("dev", "m1")] = WorkflowRun(9, "completed", "failure", "https://gh/run/9")
     tick(monitor, clock)
     assert fix_state(store) == "failed" and "deploy to dev failure" in store.list_fixes()[0].error
+
+
+def test_forbidden_pattern_rejected_with_hint():
+    from pipeline_agent.config import ForbiddenPattern
+
+    cfg = CFG.model_copy(update={"forbidden_patterns": [ForbiddenPattern(pattern=r"\bF\.try_cast\s*\(", message="use F.expr")]})
+    bad = FIXED_SRC.replace('F.expr("try_cast(qty AS INT)")', 'F.try_cast(F.col("qty"), "int")')
+    p = FixProposal.model_validate(proposal([{"path": SRC, "content": bad}, {"path": TEST, "content": FIXED_TEST}]))
+    errors = validate_proposal(p, CTX, cfg)
+    assert any("use F.expr" in e and "line" in e for e in errors), errors
+    assert validate_proposal(FixProposal.model_validate(proposal()), CTX, cfg) == [], "F.expr('try_cast(...)') is fine"
+
+
+def test_repo_fix_config_forbids_try_cast():
+    from pathlib import Path
+
+    from pipeline_agent.config import load_agent_config
+
+    cfg = load_agent_config(Path(__file__).parents[1] / "config").fix
+    bad = FIXED_SRC.replace('F.expr("try_cast(qty AS INT)")', 'F.col("qty").try_cast("int")')
+    p = FixProposal.model_validate(proposal([{"path": SRC, "content": bad}, {"path": TEST, "content": FIXED_TEST}]))
+    assert any("PySpark 4.0" in e for e in validate_proposal(p, CTX, cfg))
 
 
 def test_stuck_fix_times_out(setup, clock, store):

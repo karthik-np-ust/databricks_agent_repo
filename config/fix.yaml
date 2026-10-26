@@ -14,6 +14,13 @@ fix:
   # Each changed file must keep at least as many occurrences of these as before
   # (stops "fixes" that delete data-quality checks).
   protected_patterns: ["assert_not_null("]
+  # Known runtime breakers (platform knowledge), rejected before commit with a hint for the model.
+  # Learned 2026-10-26: F.try_cast passed review but crashed the dev smoke run.
+  forbidden_patterns:
+    - pattern: '\bF\.try_cast\s*\('
+      message: 'pyspark.sql.functions.try_cast does not exist in PySpark 3.5; use F.expr("try_cast(col AS INT)")'
+    - pattern: '(?<!\bF)\.try_cast\s*\('
+      message: 'Column.try_cast only exists from PySpark 4.0; use F.expr("try_cast(col AS INT)")'
   require_test_change: true
   max_files: 6
   max_file_chars: 40000

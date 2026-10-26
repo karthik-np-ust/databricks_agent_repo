@@ -8,7 +8,8 @@ interface Step { label: string; state: StepState; at?: string; detail?: string }
 
 const useStyles = makeStyles({
   row: { display: "flex", alignItems: "flex-start", gap: "0", overflowX: "auto", paddingBottom: "4px" },
-  step: { display: "flex", flexDirection: "column", alignItems: "center", gap: "4px", minWidth: "108px", flex: 1, textAlign: "center" },
+  step: { display: "flex", flexDirection: "column", alignItems: "center", gap: "4px", minWidth: "108px", maxWidth: "150px", flex: 1, textAlign: "center" },
+  detail: { maxWidth: "140px", overflow: "hidden", textOverflow: "ellipsis" },
   line: { height: "2px", flex: 1, minWidth: "16px", marginTop: "10px" },
 });
 
@@ -47,7 +48,7 @@ export function buildSteps(inc: IncidentSummary, fix: Fix | null, audit: AuditEn
       const terminal = fix.state === "failed" || fix.state === "rejected";
       steps.push({
         label, state: terminal ? "failed" : fix.awaiting_human ? "waiting_human" : "current",
-        detail: terminal ? fix.error ?? fix.state : fix.awaiting_human ? "waiting for you" : fix.repairs ? `repair attempt ${fix.repairs}` : undefined,
+        detail: terminal ? fix.error ?? fix.state : fix.awaiting_human ? "waiting for you" : fix.repairs ? `repair attempt ${fix.repairs}` : "in progress",
       });
       continue;
     }
@@ -76,7 +77,11 @@ export function Lifecycle({ steps }: { steps: Step[] }) {
             <div className={s.step} role="listitem" aria-label={`${st.label}: ${LABEL[st.state]}`} tabIndex={0}>
               {ICON[st.state]}
               <Text size={200} weight={st.state === "pending" ? "regular" : "semibold"}>{st.label}</Text>
-              <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>{st.at ? dateTime(st.at) : st.detail ?? ""}</Text>
+              {/* Long details (e.g. a failure URL) are cut to one line; the tooltip has the full text. */}
+              <Text size={100} truncate wrap={false} block className={s.detail}
+                style={{ color: st.state === "failed" ? tokens.colorPaletteRedForeground1 : tokens.colorNeutralForeground3 }}>
+                {st.at ? dateTime(st.at) : st.state === "failed" ? "failed: hover for details" : st.detail ?? ""}
+              </Text>
             </div>
           </Tooltip>
         </div>

@@ -62,9 +62,17 @@ class RepoHost(Protocol):
     def comment(self, number: int, body: str) -> None: ...
     def checks(self, sha: str, required: list[str]) -> ChecksStatus: ...
     def workflow_run(self, workflow: str, branch: str, sha: str) -> WorkflowRun | None: ...
+    def workflow_failure(self, run_id: int) -> list[str]: ...
 
 
 _HEADERS = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+# Terminal colour codes (Databricks notebook traces are full of them); the ESC byte is
+# sometimes lost in transit, leaving bare "[0;31m"-style fragments.
+_ANSI = re.compile(r"\x1b?\[[0-9;]*m")
+
+
+def strip_ansi(text: str) -> str:
+    return _ANSI.sub("", text)
 
 
 class AppTokenAuth(httpx.Auth):
@@ -289,7 +297,7 @@ class GitHubClient:
         done = all(n in latest and latest[n]["status"] == "completed" for n in required)
         return ChecksStatus("success" if done else "pending", details, [])
 
-    _LOG_SIGNAL = re.compile(r"(FAILED|ERROR|Error|error:|Exception|Traceback|^E\s|assert|NameError|AttributeError|SyntaxError| failed| passed)")
+    _LOG_SIGNAL = re.compile(r"(FAILED|ERROR|Error|error:|Exception|Traceback|^E\s|assert|NameError|AttributeError|SyntaxError| failed| passed|---->)")
     _LOG_TS = re.compile(r"^\d{4}-\d\d-\d\dT[\d:.]+Z ")
 
     def job_log_excerpt(self, job_id: int, max_lines: int = 60) -> str:
@@ -300,10 +308,27 @@ class GitHubClient:
             return ""
         if resp.status_code >= 400:
             return ""
-        lines = [self._LOG_TS.sub("", line) for line in resp.text.splitlines()]
+        lines = [strip_ansi(self._LOG_TS.sub("", line)) for line in resp.text.splitlines()]
         # pytest prints the useful part last: failure details, then the short summary.
         keep = [line for line in lines if self._LOG_SIGNAL.search(line) and "##[" not in line]
         return "\n".join(keep[-max_lines:])[-6000:]
+
+    def workflow_failure(self, run_id: int) -> list[str]:
+        """Why a workflow run (e.g. a deploy + smoke run) failed: annotations and log excerpts of failed jobs."""
+        out = []
+        for job in self._call("GET", f"/actions/runs/{run_id}/jobs")["jobs"]:
+            if job.get("conclusion") not in ("failure", "timed_out"):
+                continue
+            notes = [
+                strip_ansi(a.get("message", "")).replace("%0A", "\n")[-5000:]
+                for a in self._call("GET", f"/check-runs/{job['id']}/annotations")
+                if a.get("annotation_level") == "failure" and "exit code" not in a.get("message", "")
+            ]
+            out.extend(f"{job['name']}: {n}" for n in notes)
+            if not notes:
+                excerpt = self.job_log_excerpt(job["id"])
+                out.append(f"{job['name']} log:\n{excerpt}" if excerpt else f"{job['name']}: {job.get('conclusion')}")
+        return out
 
     def workflow_run(self, workflow: str, branch: str, sha: str) -> WorkflowRun | None:
         data = self._call(

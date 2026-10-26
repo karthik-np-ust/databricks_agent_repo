@@ -105,6 +105,7 @@ PR_OPEN(main) ─ checks green → "Approval needed" notification; the agent NEV
               ─ human merges ─► DEPLOYING(main) ─ prod deploy (prod Environment approval) green
               ─► rerun prod job ─► VERIFYING ─ rerun succeeded ─► RESOLVED (incident resolved)
 CI failure on the fix PR → REPAIR: read the CI job log, LLM fixes, new commit on the same PR (max repair_attempts)
+dev deploy/smoke-run failure → REPAIR: read the deploy output, commit on the fix branch, follow-up PR → dev (same budget)
 Repairs exhausted, or a failing promotion/deploy → FAILED (PR comment with failures). PR closed unmerged → REJECTED.
 No progress for max_wait_hours → FAILED. All three escalate the incident.
 ```
