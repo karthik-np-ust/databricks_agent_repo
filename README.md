@@ -36,6 +36,13 @@ python -m venv .venv
 .\.venv\Scripts\pytest                     # agent + plugin tests
 ```
 
+**Ops Console** (web UI), see [docs/14-console.md](docs/14-console.md):
+```powershell
+.\.venv\Scripts\pip install -e ".[console]"
+cd frontend; npm install; npm run build; cd ..
+.\.venv\Scripts\pipeline-agent console    # http://127.0.0.1:8080
+```
+
 The default config ([config/platforms.yaml](config/platforms.yaml)) points at the **simulator**. It has five fake pipelines that are slow, broken, flaky, missing a permission, or healthy. The second `once` shows the agent opening a code incident, rerunning the transient failure and escalating the permission failure. After 5 minutes it cancels and reruns the slow report.
 
 To connect Databricks Free Edition, follow [docs/10-demo-runbook.md](docs/10-demo-runbook.md).
@@ -57,4 +64,5 @@ To connect Databricks Free Edition, follow [docs/10-demo-runbook.md](docs/10-dem
 | [11 Security](docs/11-security.md) | Controls in place and planned |
 | [12 Testing](docs/12-testing.md) | Test suites and how to run them |
 | [13 GitHub setup](docs/13-github-setup.md) | Repo, secrets, environments, branch protection, first deploy |
+| [14 Ops Console](docs/14-console.md) | The web console: screens, roles, security, design system, hosting |
 | [WORKLOG](docs/WORKLOG.md) | Change log of what was built, when |

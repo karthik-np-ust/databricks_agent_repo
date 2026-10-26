@@ -1,0 +1,89 @@
+"""Shared state for the console API: config, store, lazily built platform/GitHub clients, caches."""
+
+from __future__ import annotations
+
+import logging
+import threading
+import time
+from datetime import datetime
+from typing import Any, Callable
+
+from ..config import AgentConfig, Settings, load_agent_config
+from ..git.github import GitHubClient
+from ..sdk.plugin import PlatformInstance
+from ..store.db import StateStore
+from .auth import TokenSigner
+
+log = logging.getLogger(__name__)
+
+
+class TTLCache:
+    """Small thread-safe cache so a dashboard refresh doesn't hammer Databricks or GitHub."""
+
+    def __init__(self) -> None:
+        self._data: dict[str, tuple[float, Any]] = {}
+        self._lock = threading.Lock()
+
+    def get(self, key: str, ttl: float, produce: Callable[[], Any]) -> Any:
+        now = time.monotonic()
+        with self._lock:
+            hit = self._data.get(key)
+            if hit and now - hit[0] < ttl:
+                return hit[1]
+        value = produce()
+        with self._lock:
+            self._data[key] = (now, value)
+        return value
+
+    def clear(self) -> None:
+        with self._lock:
+            self._data.clear()
+
+
+def iso(dt: datetime | None) -> str | None:
+    return dt.isoformat().replace("+00:00", "Z") if dt else None
+
+
+class ConsoleContext:
+    def __init__(self, settings: Settings, config: AgentConfig | None = None, store: StateStore | None = None,
+                 instances: dict[str, PlatformInstance] | None = None, github: GitHubClient | None = None):
+        self.settings = settings
+        self.config = config or load_agent_config(settings.config_dir)
+        self.store = store or StateStore(settings.database_url)
+        self.signer = TokenSigner(settings.console_secret.get_secret_value() if settings.console_secret else None)
+        self.cache = TTLCache()
+        self._instances = instances
+        self._github = github
+        self._github_error: str | None = None
+        self._monitor = None
+        self._lock = threading.Lock()
+
+    @property
+    def instances(self) -> dict[str, PlatformInstance]:
+        with self._lock:
+            if self._instances is None:
+                from ..runtime import build_instances
+
+                self._instances = build_instances(self.config)
+            return self._instances
+
+    @property
+    def github(self) -> GitHubClient | None:
+        with self._lock:
+            if self._github is None and self._github_error is None:
+                try:
+                    from ..runtime import build_github
+
+                    self._github = build_github(self.settings, self.config)
+                except Exception as exc:  # not configured: console still works, fix diffs just aren't shown
+                    self._github_error = str(exc)
+            return self._github
+
+    def monitor(self):
+        """A Monitor wired like the agent's, for on-demand triage from the console."""
+        with self._lock:
+            if self._monitor is None:
+                from ..runtime import build_monitor
+
+                self._monitor = build_monitor(self.settings)
+            return self._monitor

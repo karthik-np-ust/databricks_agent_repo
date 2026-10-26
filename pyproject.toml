@@ -23,7 +23,8 @@ dependencies = [
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.1"]
-dev = ["pytest>=8"]
+console = ["fastapi>=0.115", "uvicorn>=0.30"]
+dev = ["pytest>=8", "fastapi>=0.115", "uvicorn>=0.30"]
 
 [project.scripts]
 pipeline-agent = "pipeline_agent.cli:main"

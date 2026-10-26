@@ -29,6 +29,17 @@ jobs:
       - run: pip install -r sample_pipelines/requirements-dev.txt
       - run: pytest sample_pipelines/tests -rs
 
+  console-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22", cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - run: npm ci --no-audit --no-fund
+        working-directory: frontend
+      - run: npm run build   # tsc type-check + production bundle
+        working-directory: frontend
+
   # The agent's PRs may only touch pipeline code and tests. Anything else
   # (workflows, config, CODEOWNERS) fails here, whatever the PR text says.
   path-guard:

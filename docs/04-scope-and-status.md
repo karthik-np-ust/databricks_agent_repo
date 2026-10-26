@@ -11,7 +11,7 @@ Last updated: 2026-10-25.
 | 1 Plugin SDK + monitor | Capabilities, models, registry, contract kit, simulator, Databricks plugin, policy engine, monitor, store, audit, notifier, redaction, CLI | ✅ Built and tested. Databricks plugin **connected to the real workspace** (auth, jobs API, billing table). |
 | 2 LLM triage | LLM gateway (OpenRouter), budgets, ledger, model fallback, structured diagnosis, prompt-injection flagging | ✅ **Built and tested** (97 tests total). Live run against OpenRouter: 2 incidents diagnosed correctly, with fallback after a provider 502. |
 | 3 Fix flow | Patch writer + guards, GitHub client, dev → qa promotion PRs, human approval gate, prod rerun + verify | ✅ **Built and tested** (fake GitHub + fake LLM, 123 tests). ⏳ Live run needs the agent's GitHub bot token ([13](13-github-setup.md#12-agent-identity-for-phase-3)). |
-| 4 API + Ops Console | FastAPI + SSE, React/Fluent UI MVP pages, cost dashboard | ⏳ Not started |
+| 4 API + Ops Console | FastAPI + React/Fluent UI console: 12 screens, RBAC, audited actions, runtime kill switch, cost dashboards | ✅ **Built** (11 API tests; UI type-checked and built; smoke-tested on real data). Demo auth only; Entra ID OIDC next. |
 | 5 Hardening | Prompt-injection tests, Docker packaging verified, guardrail review | ◐ Partial: kill switch, dry run, circuit breaker, redaction, injection heuristic, Dockerfile |
 | 6 Snowflake + OpenLineage | Second plugin, proving zero core changes | ⏳ Not started |
 

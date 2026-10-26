@@ -191,6 +191,26 @@ def _cmd_github(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_console(args: argparse.Namespace) -> int:
+    try:
+        import uvicorn
+    except ImportError:
+        print('Install the console extra: pip install -e ".[console]"')
+        return 1
+    from .api.app import create_app, find_dist
+
+    settings = Settings()
+    host = args.host or settings.console_host
+    port = args.port or settings.console_port
+    if not (find_dist(settings.console_dist) / "index.html").exists():
+        print("Frontend not built (frontend/dist missing): API only. Build with: cd frontend; npm install; npm run build")
+    if settings.console_auth == "demo":
+        print("Console auth: DEMO mode (any name + role). Not for production; use AGENT_CONSOLE_AUTH=oidc.")
+    print(f"Ops Console: http://{host}:{port}   API docs: http://{host}:{port}/api/docs")
+    uvicorn.run(create_app(settings), host=host, port=port, log_level="info")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="pipeline-agent", description="Pipeline production support agent")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -217,6 +237,10 @@ def main(argv: list[str] | None = None) -> int:
     p_fix.add_argument("incident_id", type=int)
     p_fix.set_defaults(func=_cmd_fix)
     sub.add_parser("github", help="check the agent's GitHub token and branches").set_defaults(func=_cmd_github)
+    p_console = sub.add_parser("console", help="start the Ops Console (web UI + API)")
+    p_console.add_argument("--host")
+    p_console.add_argument("--port", type=int)
+    p_console.set_defaults(func=_cmd_console)
     p_audit = sub.add_parser("audit", help="show the audit log")
     p_audit.add_argument("--limit", type=int, default=50)
     p_audit.set_defaults(func=_cmd_audit)
