@@ -44,3 +44,29 @@ def test_top_stores_orders_by_revenue(spark, fixtures_dir):
     report = top_stores(daily_sales(clean_orders(read_fixture(spark, fixtures_dir, "orders_clean.csv")))).collect()
     assert [r["store_id"] for r in report] == ["S002", "S001", "S003"]
     assert float(report[0]["revenue"]) == 50.0
+
+
+def test_clean_orders_handles_malformed_qty_and_price(spark):
+    """Malformed numeric strings become NULL via try_cast instead of failing the job."""
+    from pyspark.sql import Row
+
+    # One clean row, one with 'abc' qty, one with 'xyz' unit_price
+    data = [
+        Row(order_id="ORD-1", order_ts="2026-10-01 09:00:00", store_id="S001", product_id="P1", qty="1", unit_price="10.00", updated_at="2026-10-01 09:05:00", notes=""),
+        Row(order_id="ORD-2", order_ts="2026-10-01 10:00:00", store_id="S001", product_id="P2", qty="abc", unit_price="7.50", updated_at="2026-10-01 10:05:00", notes=""),
+        Row(order_id="ORD-3", order_ts="2026-10-01 11:00:00", store_id="S002", product_id="P3", qty="2", unit_price="xyz", updated_at="2026-10-01 11:05:00", notes=""),
+    ]
+    df = spark.createDataFrame(data)
+    out = clean_orders(df)
+    rows = {r["order_id"]: r for r in out.collect()}
+    # Clean row parses correctly
+    assert rows["ORD-1"]["qty"] == 1
+    assert float(rows["ORD-1"]["unit_price"]) == 10.0
+    # Malformed qty becomes NULL
+    assert rows["ORD-2"]["qty"] is None
+    assert float(rows["ORD-2"]["unit_price"]) == 7.5
+    # Malformed unit_price becomes NULL
+    assert rows["ORD-3"]["qty"] == 2
+    assert rows["ORD-3"]["unit_price"] is None
+    # All three rows are present (not dropped)
+    assert out.count() == 3

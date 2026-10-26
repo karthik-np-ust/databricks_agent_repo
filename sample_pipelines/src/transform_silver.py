@@ -23,8 +23,8 @@ def clean_orders(df: DataFrame) -> DataFrame:
         F.to_timestamp("order_ts").alias("order_ts"),
         F.col("store_id"),
         F.col("product_id"),
-        F.col("qty").cast("int").alias("qty"),
-        F.col("unit_price").cast("decimal(10,2)").alias("unit_price"),
+        F.expr("try_cast(qty AS INT)").alias("qty"),
+        F.expr("try_cast(unit_price AS DECIMAL(10,2))").alias("unit_price"),
         F.to_timestamp("updated_at").alias("updated_at"),
     )
 
