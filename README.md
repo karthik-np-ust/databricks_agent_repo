@@ -16,7 +16,7 @@ Databricks is the first platform. Snowflake and other ETL tools plug in through 
 > - plugin SDK, monitor and policy engine built
 > - LLM triage running through OpenRouter, with budgets
 >
-> The agent is connected to the real Databricks workspace. Demo-job deployment is blocked by the corporate proxy (uploads). Next: the fix-PR flow (Phase 3) and the Ops Console (Phase 4). See [docs/04-scope-and-status.md](docs/04-scope-and-status.md).
+> **2026-10-26:** dev/qa/prod are deployed through GitHub Actions, and the first real prod failure was detected and diagnosed. Phase 3 (the agent writes the fix and promotes it dev → qa → your approval → prod) is built and tested; the live run needs the agent's GitHub bot token. Next: the Ops Console (Phase 4). See [docs/04-scope-and-status.md](docs/04-scope-and-status.md).
 
 ## Quick start (no credentials needed)
 

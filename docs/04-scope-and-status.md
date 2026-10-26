@@ -10,7 +10,7 @@ Last updated: 2026-10-25.
 | 0b Sample jobs + fault kit | Bundle with 3 jobs × 3 envs, synthetic data, 14 fault scenarios, setup/inject/reset/deploy scripts, CI/CD workflows | ✅ Built. ◐ Workspace setup partial (dev catalog, schemas, volume, secret scope). **Data upload and job deploy are blocked by Zscaler from this laptop.** |
 | 1 Plugin SDK + monitor | Capabilities, models, registry, contract kit, simulator, Databricks plugin, policy engine, monitor, store, audit, notifier, redaction, CLI | ✅ Built and tested. Databricks plugin **connected to the real workspace** (auth, jobs API, billing table). |
 | 2 LLM triage | LLM gateway (OpenRouter), budgets, ledger, model fallback, structured diagnosis, prompt-injection flagging | ✅ **Built and tested** (97 tests total). Live run against OpenRouter: 2 incidents diagnosed correctly, with fallback after a provider 502. |
-| 3 Fix flow | Repo tools, patch branch, dev → qa promotion PRs, human approval gate, prod rerun | ⏳ Not started (CI side ready: ci.yml, deploy.yml, CODEOWNERS, path guard) |
+| 3 Fix flow | Patch writer + guards, GitHub client, dev → qa promotion PRs, human approval gate, prod rerun + verify | ✅ **Built and tested** (fake GitHub + fake LLM, 123 tests). ⏳ Live run needs the agent's GitHub bot token ([13](13-github-setup.md#12-agent-identity-for-phase-3)). |
 | 4 API + Ops Console | FastAPI + SSE, React/Fluent UI MVP pages, cost dashboard | ⏳ Not started |
 | 5 Hardening | Prompt-injection tests, Docker packaging verified, guardrail review | ◐ Partial: kill switch, dry run, circuit breaker, redaction, injection heuristic, Dockerfile |
 | 6 Snowflake + OpenLineage | Second plugin, proving zero core changes | ⏳ Not started |
@@ -73,5 +73,5 @@ JSON API calls work: monitoring, SQL, secrets, jobs, cancel/rerun. Binary upload
 | Separate `seed_data.py`, `break_env.py` | Folded into `inject_fault.py` / `_common.py` | One entry point per scenario |
 | Scenario 11: revoke a grant | Delete a secret (`Secret does not exist`) | On Free Edition the only user owns everything |
 | Scenario 12: injection in `notes` | Injection in the `qty` value | It then appears verbatim in the CAST error, so it really reaches the agent |
-| LangGraph for triage | Plain gateway + triage module | Triage is one structured call; LangGraph is kept for the multi-step fix flow (Phase 3) |
+| LangGraph for triage and the fix flow | Plain gateway + triage module; DB-backed state machine (`fix_attempts`) | The flow is linear with long external waits (CI, deploys, humans). A persisted state machine advanced per tick is simpler, resumable across restarts and fully unit-testable, with no extra framework. |
 | Local `databricks bundle deploy` | `scripts/deploy_sdk.py` (same bundle files) | CLI download blocked by the corporate proxy; CI still uses bundles |

@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 from .config import Settings, load_agent_config
 from .net import use_system_trust_store
-from .runtime import build_gateway, build_instances, build_monitor
+from .runtime import build_gateway, build_github, build_instances, build_monitor
 from .sdk.registry import discover_plugins
 from .store.db import StateStore
 
@@ -140,6 +140,57 @@ def _cmd_audit(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_fixes(args: argparse.Namespace) -> int:
+    store = StateStore(Settings().database_url)
+    cfg = load_agent_config(Settings().config_dir).fix
+    for f in store.list_fixes():
+        target = cfg.promotion[min(f.stage, len(cfg.promotion) - 1)]
+        where = f"-> {target}" if f.state in ("pr_open", "deploying") else ""
+        print(f"  fix #{f.id:<3} incident #{f.incident_id:<4} {f.state:<10} {where:<9} {f.branch or ''}")
+        if args.verbose_history:
+            for h in f.history or []:
+                print(f"        {h['ts'][:19]}  {h['state']:<10} {h.get('note', '')}")
+        for branch, url in (f.prs or {}).items():
+            print(f"        PR -> {branch}: {url}")
+        if f.error:
+            print(f"        error: {f.error[:300]}")
+    return 0
+
+
+def _cmd_fix(args: argparse.Namespace) -> int:
+    settings = Settings()
+    if not (settings.fix_enabled and settings.llm_enabled):
+        print("Set AGENT_LLM_ENABLED=true and AGENT_FIX_ENABLED=true in .env")
+        return 1
+    monitor = build_monitor(settings)
+    inc = monitor.store.get_incident(args.incident_id)
+    if inc is None:
+        print(f"No incident #{args.incident_id}")
+        return 1
+    if inc.diagnosis is None:
+        print("Incident has no diagnosis yet; running triage first")
+        monitor.run_triage(inc.id, inc.error_message)
+    fix = monitor.fixer.start(inc.id)
+    if fix is None:
+        print("Deferred: another fix is in flight (fix.max_concurrent)")
+        return 1
+    print(f"fix #{fix.id} {fix.state}; advancing one step now (writing the patch can take a minute)...")
+    for fix_id, before, after in monitor.fixer.advance_all():
+        print(f"  fix #{fix_id}: {before} -> {after}")
+    return 0
+
+
+def _cmd_github(args: argparse.Namespace) -> int:
+    settings = Settings()
+    config = load_agent_config(settings.config_dir)
+    gh = build_github(settings, config)
+    login = gh.whoami()
+    print(f"Token user: {login}   repo: {config.fix.repo}")
+    for branch in config.fix.promotion:
+        print(f"  {branch:<5} {gh.branch_sha(branch)[:7]}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="pipeline-agent", description="Pipeline production support agent")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -159,6 +210,13 @@ def main(argv: list[str] | None = None) -> int:
     p_llm.add_argument("--limit", type=int, default=10)
     p_llm.add_argument("--remote", action="store_true", help="query provider key status even if LLM is disabled")
     p_llm.set_defaults(func=_cmd_llm)
+    p_fixes = sub.add_parser("fixes", help="list automated fix attempts")
+    p_fixes.add_argument("--history", dest="verbose_history", action="store_true")
+    p_fixes.set_defaults(func=_cmd_fixes)
+    p_fix = sub.add_parser("fix", help="start the fix flow for an incident now")
+    p_fix.add_argument("incident_id", type=int)
+    p_fix.set_defaults(func=_cmd_fix)
+    sub.add_parser("github", help="check the agent's GitHub token and branches").set_defaults(func=_cmd_github)
     p_audit = sub.add_parser("audit", help="show the audit log")
     p_audit.add_argument("--limit", type=int, default=50)
     p_audit.set_defaults(func=_cmd_audit)

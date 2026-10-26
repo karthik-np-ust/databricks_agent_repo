@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from .config import AgentConfig, Settings, load_agent_config
+from .fix.flow import FixFlow
+from .git.github import GitHubClient
 from .llm.gateway import LLMGateway
 from .llm.triage import Triage
 from .monitor import Monitor
@@ -35,16 +37,32 @@ def build_gateway(settings: Settings, config: AgentConfig, store: StateStore) ->
     return LLMGateway.from_settings(settings, store, config.budgets, config.llm, EnvSecretResolver())
 
 
+def build_github(settings: Settings, config: AgentConfig) -> GitHubClient:
+    if not config.fix.repo:
+        raise ValueError("config/fix.yaml: fix.repo is not set")
+    token = EnvSecretResolver().get(settings.github_token_ref)
+    return GitHubClient(config.fix.repo, token, settings.github_api_url)
+
+
 def build_monitor(settings: Settings | None = None) -> Monitor:
     settings = settings or Settings()
     config = load_agent_config(settings.config_dir)
     store = StateStore(settings.database_url)
-    triage = Triage(build_gateway(settings, config, store)) if settings.llm_enabled else None
+    instances = build_instances(config)
+    notifier = build_notifier(settings)
+    gateway = build_gateway(settings, config, store) if settings.llm_enabled else None
+    triage = Triage(gateway) if gateway else None
+    fixer = None
+    if settings.fix_enabled:
+        if gateway is None:
+            raise ValueError("AGENT_FIX_ENABLED needs AGENT_LLM_ENABLED=true")
+        fixer = FixFlow(settings, config.fix, store, build_github(settings, config), gateway, config.llm.fix_models, instances, notifier)
     return Monitor(
         settings=settings,
         config=config,
-        instances=build_instances(config),
+        instances=instances,
         store=store,
-        notifier=build_notifier(settings),
+        notifier=notifier,
         triage=triage,
+        fixer=fixer,
     )

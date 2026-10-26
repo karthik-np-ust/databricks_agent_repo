@@ -9,12 +9,15 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from .config import AgentConfig, Settings
 from .llm.context import condense_logs
 from .llm.gateway import BudgetExceeded
 from .llm.triage import Diagnosis, Triage
+
+if TYPE_CHECKING:
+    from .fix.flow import FixFlow
 from .notify.webhook import Notification, Notifier, Severity
 from .policy import ActionType, Decision, PolicyEngine
 from .sdk.capabilities import Capability
@@ -47,8 +50,10 @@ class Monitor:
         notifier: Notifier,
         clock: Callable[[], datetime] = utcnow,
         triage: Triage | None = None,
+        fixer: "FixFlow | None" = None,
     ):
         self.triage = triage
+        self.fixer = fixer
         self.settings = settings
         self.config = config
         self.instances = instances
@@ -77,6 +82,10 @@ class Monitor:
                 log.exception("Polling %s failed", iid)
                 report.errors.append(f"{iid}: {exc}")
                 self.audit.log("adapter_error", iid, error=str(exc))
+        if self.fixer is not None:
+            for fix_id, before, after in self.fixer.advance_all():
+                if before != after:
+                    report.decisions.append((f"fix:{fix_id}", f"fix {before}->{after}", ""))
         return report
 
     def _process_instance(self, instance: PlatformInstance, now: datetime, report: TickReport) -> None:
@@ -259,4 +268,11 @@ class Monitor:
             f"Diagnosis: {incident.pipeline_name}", diag.summary,
             Severity.CRITICAL if diag.suspicious_content else Severity.INFO, facts, incident.url,
         ))
+        if (
+            self.fixer is not None
+            and incident.fix_eligible
+            and incident.status == "open"
+            and diag.fix_type in ("code_change", "data_fix")
+        ):
+            self.fixer.start(incident.id)
         return diag

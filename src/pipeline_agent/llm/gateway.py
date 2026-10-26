@@ -109,6 +109,7 @@ class LLMGateway:
         incident_id: int | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: Any = None,
+        max_tokens: int | None = None,
     ) -> LLMResult:
         if not models:
             raise LLMUnavailable("no models configured")
@@ -126,7 +127,7 @@ class LLMGateway:
                 kwargs: dict[str, Any] = {
                     "model": model,
                     "messages": clean,
-                    "max_tokens": self.config.max_tokens,
+                    "max_tokens": max_tokens or self.config.max_tokens,
                     "temperature": self.config.temperature,
                     "extra_body": {"usage": {"include": True}},
                 }

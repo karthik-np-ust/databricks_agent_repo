@@ -94,13 +94,33 @@ The Databricks plugin maps the name prefix to `Env` (`env_prefixes` config). Fal
 
 The model answers through a single `report_diagnosis` tool, and its JSON is validated into `Diagnosis`. The result is stored on the incident and sent as a follow-up notification. Budget stop → incident escalated. LLM outage → audit `llm_unavailable`; monitoring continues. The rule-based class still drives actions.
 
-**Phase 3: fix flow** (LangGraph state machine with a human-in-the-loop interrupt):
-1. Incident is fix-eligible → read code at the deployed ref (`CodeLocator`).
-2. Diagnose, then patch on `fix/incident-<id>`, adding a failing fixture and test.
-3. PR to `dev` → CI tests + deploy dev + smoke run → auto-merge on green.
-4. Promotion PR `dev → qa` → CI deploy qa + smoke run.
-5. Promotion PR `qa → main` → **human approval** (CODEOWNERS + `prod` environment reviewers).
-6. Merge → CI deploys prod → agent reruns prod and verifies → incident resolved.
+**Phase 3: fix flow (built).** [fix/flow.py](../src/pipeline_agent/fix/flow.py) is a state machine persisted in `fix_attempts`. Each monitor tick moves every active attempt at most one step, so the flow survives restarts and can wait for CI, deploys or a human.
+
+```
+PLANNED ─ read code at main (GitHub API) → LLM writes fix + test → guards → commit fix/incident-N → PR → dev
+PR_OPEN(dev)  ─ required checks green → agent merges (auto_merge) ─► DEPLOYING(dev) ─ deploy.yml run green
+PR_OPEN(qa)   ─ PR dev → qa; checks green → agent merges if rules allow, else waits for a human
+DEPLOYING(qa) ─ deploy green → PR qa → main
+PR_OPEN(main) ─ checks green → "Approval needed" notification; the agent NEVER merges this
+              ─ human merges ─► DEPLOYING(main) ─ prod deploy (prod Environment approval) green
+              ─► rerun prod job ─► VERIFYING ─ rerun succeeded ─► RESOLVED (incident resolved)
+Any CI or deploy failure → FAILED (PR comment with failures). PR closed unmerged → REJECTED.
+No progress for max_wait_hours → FAILED. All three escalate the incident.
+```
+
+**Starting a fix:** after triage, when the incident is fix-eligible (`auto_fix` + CODE capability), still `open`, and the diagnosis `fix_type` is `code_change`/`data_fix`. You can also start one by hand with `pipeline-agent fix <incident>`. At most `max_concurrent` fixes run at once.
+
+**Patch guards** ([fix/patch.py](../src/pipeline_agent/fix/patch.py)) run before anything is committed:
+- allowed paths only
+- Python compiles
+- protected patterns (`assert_not_null(`) never decrease
+- a test must change
+- no secrets
+- file count and size limits
+
+The model gets one retry with the validation errors fed back.
+
+**Idempotency:** branch creation moves an existing branch, and PR creation reuses an open PR. A step that fails mid-way (network) is retried on the next tick without duplicates.
 
 **Phase 4: API and Ops Console.** FastAPI (REST + SSE) and React/Fluent UI.
 

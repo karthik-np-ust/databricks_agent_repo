@@ -31,9 +31,9 @@ databricks_agent/
 │  ├─ testing/contract.py         PluginContractSuite (plugin conformance tests)
 │  ├─ net.py                      OS trust store (corporate TLS inspection)
 │  ├─ llm/                        ✅ gateway.py (budgets, redaction, fallback, ledger), triage.py (diagnosis)
-│  ├─ workflow/                   ⏳ Phase 3: LangGraph incident state machine
-│  ├─ tools/                      ⏳ Phase 3: sandboxed repo/log tools for the LLM
-│  ├─ git/                        ⏳ Phase 3: GitHub branches, PRs, review status
+│  ├─ fix/                        ✅ patch.py (LLM fix + guards), flow.py (dev → qa → human → prod state machine)
+│  ├─ git/                        ✅ github.py (REST: tree, commits, PRs, merges, checks, workflow runs)
+│  ├─ llm/context.py              ✅ condenses JVM traces for LLM and humans
 │  ├─ integrations/               ⏳ Phase 6: OpenLineage receiver, generic REST/SQL plugins
 │  └─ api/                        ⏳ Phase 4: FastAPI for the Ops Console
 │
@@ -48,7 +48,8 @@ databricks_agent/
 │
 ├─ config/                        ✅ agent configuration (no secrets)
 │  ├─ platforms.yaml              platform instances (simulator + dbx-free)
-│  ├─ llm.yaml                    model routing (triage models, fallbacks)
+│  ├─ llm.yaml                    model routing (triage and fix models, fallbacks)
+│  ├─ fix.yaml                    fix flow: repo, promotion order, allowed paths, guards
 │  ├─ pipelines.yaml              policies: thresholds, rerun caps, auto_fix, envs
 │  └─ budgets.yaml                LLM budgets (per incident / per day)
 │

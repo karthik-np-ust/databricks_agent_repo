@@ -1,0 +1,23 @@
+# Phase 3 fix flow: agent writes a fix, promotes it dev -> qa -> (human) main.
+# Off unless AGENT_FIX_ENABLED=true.
+fix:
+  repo: karthik-np-ust/databricks_agent_repo
+  base_branch: main              # the code that failed in prod
+  promotion: [dev, qa, main]     # PR targets in order; the last one is the human gate
+  auto_merge: [dev, qa]          # agent merges these once CI is green (if branch rules allow)
+  deploy_workflow: deploy.yml    # GitHub Actions workflow whose run must succeed per branch
+  required_checks: [agent-tests, pipeline-tests, bundle-validate]
+  # The agent may only change these paths (CI path-guard enforces the same rule).
+  allowed_paths: [sample_pipelines/src/, sample_pipelines/tests/]
+  # Read-only context for the model (never modified).
+  context_paths: [sample_pipelines/resources/jobs.yml, sample_pipelines/databricks.yml]
+  # Each changed file must keep at least as many occurrences of these as before
+  # (stops "fixes" that delete data-quality checks).
+  protected_patterns: ["assert_not_null("]
+  require_test_change: true
+  max_files: 6
+  max_file_chars: 40000
+  max_context_chars: 60000
+  patch_attempts: 2              # 1 retry with the validation errors fed back
+  max_concurrent: 1              # Free Edition: one fix in flight at a time
+  max_wait_hours: 48             # any waiting state older than this -> failed (escalate)
