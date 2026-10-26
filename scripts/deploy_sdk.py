@@ -30,7 +30,7 @@ from _common import REPO_ROOT, client
 
 BUNDLE_DIR = REPO_ROOT / "sample_pipelines"
 TAG = {"deployed_by": "deploy_sdk"}
-_VAR = re.compile(r"\$\{(var|bundle)\.([A-Za-z0-9_]+)\}")
+_VAR = re.compile(r"\$\{(var|bundle|workspace)\.([A-Za-z0-9_]+)\}")
 
 
 def load_bundle(target: str) -> tuple[dict, dict, dict]:
@@ -45,7 +45,7 @@ def load_bundle(target: str) -> tuple[dict, dict, dict]:
     for pattern in bundle.get("include", []):
         for f in sorted(BUNDLE_DIR.glob(pattern)):
             jobs.update((yaml.safe_load(f.read_text(encoding="utf-8")) or {}).get("resources", {}).get("jobs", {}))
-    return bundle, tgt, {"vars": variables, "jobs": jobs}
+    return bundle, tgt, {"var": variables, "jobs": jobs}
 
 
 def substitute(value, ctx: dict):
@@ -105,6 +105,7 @@ def main() -> None:
     bundle, tgt, ctx = load_bundle(args.target)
     ctx["bundle"] = {"name": bundle["bundle"]["name"]}
     root = substitute(tgt["workspace"]["root_path"], ctx)
+    ctx["workspace"] = {"root_path": root, "file_path": f"{root}/files"}
     w = client()
     current = existing_jobs(w)
     wanted = {key: job_settings(key, spec, tgt, root, ctx) for key, spec in ctx["jobs"].items()}

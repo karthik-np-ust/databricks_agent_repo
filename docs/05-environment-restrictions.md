@@ -12,6 +12,8 @@ Sources: [Databricks Free Edition limitations](https://docs.databricks.com/aws/e
 | **One workspace, one metastore** | No workspace-level dev/qa/prod isolation | Name prefixes, separate bundle root paths, separate catalogs (or schemas) |
 | Outbound internet limited to trusted domains | The agent can't run inside Databricks and call OpenRouter/GitHub | The agent runs outside Databricks |
 | Databricks Apps stop after 24h; max 3 apps | Not suitable for hosting the agent | Agent hosted locally (Stage 1) or in Azure (Stage 2) |
+| **`__file__` is not defined in serverless `spark_python_task`** (found 2026-10-26, first dev smoke run: `NameError`) | Scripts can't locate `common/` from their own path | Each task gets `--src-dir ${workspace.file_path}/src`; scripts fall back to `__file__` locally |
+| Bundle root in `/Workspace/Shared` | Deploy warning: writable by all workspace users | Acceptable for a one-user Free Edition demo. Production: `/Workspace/Users/<service-principal>/...` + `permissions` |
 | No account console / account APIs, no SSO/SCIM | No account-level service principals or SCIM groups | PAT for a bot user. Workspace SPs to be checked in Phase 0. |
 | `system.billing.usage` availability **not documented** | Real DBU cost may be unavailable | `use_billing_table: false` by default → duration-based estimate. Phase 0 checks it. |
 | CREATE CATALOG **not documented** | Catalog-per-env may fail | `layout: schema` fallback (`workspace.<env>_bronze`) in code, bundle and scripts |

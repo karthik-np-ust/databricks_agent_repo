@@ -4,7 +4,10 @@ import os
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # makes `common` importable on Databricks
+# Make `common` importable. Serverless spark_python_task has no __file__, so the
+# job passes the deployed src folder as --src-dir (see resources/jobs.yml).
+_SRC = sys.argv[sys.argv.index("--src-dir") + 1] if "--src-dir" in sys.argv else os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _SRC)
 
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F

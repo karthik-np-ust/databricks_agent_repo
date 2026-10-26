@@ -47,6 +47,7 @@ def parse_args(argv: list[str] | None = None, extra: callable | None = None) -> 
     parser.add_argument("--catalog", required=True)
     parser.add_argument("--env", required=True, choices=["dev", "qa", "prod"])
     parser.add_argument("--layout", default="catalog", choices=["catalog", "schema"])
+    parser.add_argument("--src-dir", help="deployed src folder; read by each script's import bootstrap")
     if extra:
         extra(parser)
     return parser.parse_args(argv)

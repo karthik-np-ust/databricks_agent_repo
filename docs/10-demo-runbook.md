@@ -31,7 +31,7 @@ Automated: `python scripts/phase0_checks.py [--create-catalog]`. Results from 20
 | 2 | Catalogs can be created | `CREATE CATALOG IF NOT EXISTS dev` | Use `--layout schema` and bundle `--var layout=schema --var catalog=workspace` |
 | 3 | Workspace service principals | Settings → Identity and access → Service principals | Use a PAT for a dedicated bot user (or your own, for the demo) |
 | 4 | Bundle deploy works | `cd sample_pipelines; databricks bundle validate -t dev; databricks bundle deploy -t dev` | Check `environment_version` vs `client` in jobs.yml for your CLI version |
-| 5 | `__file__` imports work on serverless | Run `[dev] orders_pipeline`; `ingest_bronze` must import `common` | Package `common` as a wheel (bundle `artifacts`) |
+| 5 | `__file__` imports work on serverless | Run `[dev] orders_pipeline`; `ingest_bronze` must import `common` | ❌ Not defined (2026-10-26). Fixed with the `--src-dir` task argument. |
 | 6 | Secret scopes | `databricks secrets create-scope partner-dev` | Drop scenario 11 or use an env-var-based check |
 | 7 | OpenRouter tool calling (Phase 2) | One chat completion with `tools` returning `usage` | Pick another model in config |
 

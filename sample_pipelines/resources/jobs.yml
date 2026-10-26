@@ -1,6 +1,10 @@
 # Three small serverless jobs. Tasks inside a job run sequentially, so at most
 # 3 tasks run at once even with every environment busy: inside Free Edition's
 # limit of 5 concurrent tasks.
+#
+# Every task gets --src-dir (the deployed src folder) because serverless
+# spark_python_task does not define __file__, so scripts can't find `common/`
+# on their own.
 resources:
   jobs:
     orders_pipeline:
@@ -24,19 +28,19 @@ resources:
           environment_key: default
           spark_python_task:
             python_file: ../src/ingest_bronze.py
-            parameters: ["--catalog", "{{job.parameters.catalog}}", "--env", "{{job.parameters.env}}", "--layout", "{{job.parameters.layout}}"]
+            parameters: ["--catalog", "{{job.parameters.catalog}}", "--env", "{{job.parameters.env}}", "--layout", "{{job.parameters.layout}}", "--src-dir", "${workspace.file_path}/src"]
         - task_key: transform_silver
           depends_on: [{ task_key: ingest_bronze }]
           environment_key: default
           spark_python_task:
             python_file: ../src/transform_silver.py
-            parameters: ["--catalog", "{{job.parameters.catalog}}", "--env", "{{job.parameters.env}}", "--layout", "{{job.parameters.layout}}"]
+            parameters: ["--catalog", "{{job.parameters.catalog}}", "--env", "{{job.parameters.env}}", "--layout", "{{job.parameters.layout}}", "--src-dir", "${workspace.file_path}/src"]
         - task_key: build_gold
           depends_on: [{ task_key: transform_silver }]
           environment_key: default
           spark_python_task:
             python_file: ../src/build_gold.py
-            parameters: ["--catalog", "{{job.parameters.catalog}}", "--env", "{{job.parameters.env}}", "--layout", "{{job.parameters.layout}}"]
+            parameters: ["--catalog", "{{job.parameters.catalog}}", "--env", "{{job.parameters.env}}", "--layout", "{{job.parameters.layout}}", "--src-dir", "${workspace.file_path}/src"]
 
     sales_report:
       name: sales_report
@@ -60,7 +64,7 @@ resources:
           environment_key: default
           spark_python_task:
             python_file: ../src/sales_report.py
-            parameters: ["--catalog", "{{job.parameters.catalog}}", "--env", "{{job.parameters.env}}", "--layout", "{{job.parameters.layout}}",
+            parameters: ["--catalog", "{{job.parameters.catalog}}", "--env", "{{job.parameters.env}}", "--layout", "{{job.parameters.layout}}", "--src-dir", "${workspace.file_path}/src",
                          "--sleep-seconds", "{{job.parameters.sleep_seconds}}"]
 
     partner_feed_ingest:
@@ -86,5 +90,5 @@ resources:
           environment_key: default
           spark_python_task:
             python_file: ../src/partner_feed.py
-            parameters: ["--catalog", "{{job.parameters.catalog}}", "--env", "{{job.parameters.env}}", "--layout", "{{job.parameters.layout}}",
+            parameters: ["--catalog", "{{job.parameters.catalog}}", "--env", "{{job.parameters.env}}", "--layout", "{{job.parameters.layout}}", "--src-dir", "${workspace.file_path}/src",
                          "--flaky-rate", "{{job.parameters.flaky_rate}}", "--leak-fake-token", "{{job.parameters.leak_fake_token}}"]

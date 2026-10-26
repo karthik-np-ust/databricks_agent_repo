@@ -2,6 +2,13 @@
 
 Newest first. Each entry: what was built, how it was verified, what's next.
 
+## 2026-10-26: GitHub deploy path live
+- Repo `karthik-np-ust/databricks_agent_repo` (public). demo-ops `setup` succeeded from GitHub (catalogs, schemas, volumes, secrets, clean data in dev/qa/prod).
+- Deploy workflow: the first prod deploy failed (most likely secrets not yet set); after adding `bundle validate` and failure annotations, prod deployed successfully. The agent sees the 3 prod jobs.
+- `dev`/`qa` branches and the `demo-baseline` tag pushed. Branch pushes without file changes don't start the path-filtered deploy; run it manually (workflow_dispatch).
+- First dev smoke run failed: `NameError: name '__file__' is not defined` on serverless `spark_python_task`. Fixed: `--src-dir ${workspace.file_path}/src` passed to every task, plus a bootstrap fallback.
+- Fixed latent bug in `scripts/deploy_sdk.py` (variables context key). CODEOWNERS syntax fixed (`@karthik-np-ust`).
+
 ## 2026-10-25: Phase 0 checks + Phase 2 (LLM triage)
 **Phase 0 (real accounts)**
 - New `scripts/phase0_checks.py`. Results: PAT, Jobs API, `system.billing.usage`, `CREATE CATALOG`, SP API, secret scopes and OpenRouter tool calling all pass.
