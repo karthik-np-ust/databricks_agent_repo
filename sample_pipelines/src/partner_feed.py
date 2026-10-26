@@ -19,6 +19,7 @@ sys.path.insert(0, _SRC)
 from pyspark.sql import SparkSession
 
 from common.config import parse_args, tables_from_args
+from common.schemas import PARTNER_FEED_SCHEMA
 
 # Obviously fake, but shaped like a Databricks token so the agent's redaction must catch it.
 FAKE_TOKEN = "dapiFAKE00000000000000000000000000"
@@ -52,8 +53,8 @@ def main() -> None:
     rows = fetch_partner_rows(args.flaky_rate)
     spark = SparkSession.builder.getOrCreate()
     loaded_at = datetime.now(timezone.utc).isoformat()
-    df = spark.createDataFrame([(s, v, loaded_at) for s, v in rows], "store_id STRING, footfall INT, loaded_at STRING")
-    df.write.mode("overwrite").saveAsTable(tables.partner_feed)
+    df = spark.createDataFrame([(s, v, loaded_at) for s, v in rows], schema=PARTNER_FEED_SCHEMA)
+    df.write.format("delta").mode("overwrite").saveAsTable(tables.partner_feed)
     print(f"partner_feed: wrote {len(rows)} rows to {tables.partner_feed}")
 
 

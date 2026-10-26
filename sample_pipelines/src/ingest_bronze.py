@@ -28,7 +28,7 @@ def main() -> None:
     tables = tables_from_args(args)
     spark = SparkSession.builder.getOrCreate()
     df = read_landing(spark, tables.landing_path)
-    df.write.mode("overwrite").option("overwriteSchema", True).saveAsTable(tables.bronze_orders)
+    df.write.format("delta").mode("overwrite").option("overwriteSchema", True).saveAsTable(tables.bronze_orders)
     print(f"bronze: wrote {df.count()} rows to {tables.bronze_orders}")
 
 

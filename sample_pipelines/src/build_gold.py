@@ -30,8 +30,8 @@ def main() -> None:
     args = parse_args()
     tables = tables_from_args(args)
     spark = SparkSession.builder.getOrCreate()
-    result = daily_sales(spark.table(tables.silver_orders))
-    result.write.mode("overwrite").option("overwriteSchema", True).saveAsTable(tables.gold_daily_sales)
+    result = daily_sales(spark.read.table(tables.silver_orders))
+    result.write.format("delta").mode("overwrite").option("overwriteSchema", True).saveAsTable(tables.gold_daily_sales)
     print(f"gold: wrote {result.count()} rows to {tables.gold_daily_sales}")
 
 
