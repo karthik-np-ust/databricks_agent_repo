@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import base64
 import json
+from datetime import datetime, timezone
 
 import httpx
+import pytest
 
 from pipeline_agent.git.github import GitHubClient
 
@@ -78,5 +80,67 @@ def test_read_file_decodes_and_404_is_none():
     assert gh.read_file("missing.txt", "main") is None
 
 
+def test_reads_retry_on_timeout_writes_do_not(monkeypatch):
+    import pipeline_agent.git.github as gh_mod
+
+    monkeypatch.setattr(gh_mod.time, "sleep", lambda s: None)
+    calls = {"GET": 0, "POST": 0}
+
+    def handler(req):
+        calls[req.method] += 1
+        if calls[req.method] == 1:
+            raise httpx.ReadTimeout("proxy hiccup", request=req)
+        return httpx.Response(200, json={"object": {"sha": "abc"}, "sha": "x", "tree": {"sha": "t"}})
+
+    gh = client(handler)
+    assert gh.branch_sha("qa") == "abc" and calls["GET"] == 2
+    with pytest.raises(httpx.ReadTimeout):
+        gh._call("POST", "/git/trees", json={})
+    assert calls["POST"] == 1
+
+
 def test_token_not_in_repr():
     assert "tok" not in repr(GitHubClient("o/r", "secret-token-value"))
+
+
+def test_github_app_auth_mints_and_refreshes_installation_token():
+    import jwt
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    from pipeline_agent.git.github import AppTokenAuth
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode()
+    now = [1_800_000_000.0]
+    minted = []
+
+    def handler(req: httpx.Request):
+        if req.url.path == "/app/installations/42/access_tokens":
+            # Signature must verify; timestamps are checked against the fake clock, not wall time.
+            claims = jwt.decode(
+                req.headers["Authorization"].split()[1], key.public_key(), algorithms=["RS256"],
+                options={"verify_iat": False, "verify_exp": False, "verify_nbf": False},
+            )
+            assert claims["iat"] == int(now[0]) - 60
+            assert claims["iss"] == "7" and claims["exp"] - claims["iat"] <= 600
+            minted.append(now[0])
+            expires = datetime.fromtimestamp(now[0] + 3600, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+            return httpx.Response(201, json={"token": f"ghs_{len(minted)}", "expires_at": expires})
+        if req.url.path == "/app":
+            return httpx.Response(200, json={"slug": "pipeline-agent-test"})
+        assert req.headers["Authorization"] == f"Bearer ghs_{len(minted)}"
+        return httpx.Response(200, json={"object": {"sha": "abc"}})
+
+    transport = httpx.MockTransport(handler)
+    auth = AppTokenAuth("7", "42", pem, "https://api.github.test", http=httpx.Client(transport=transport), clock=lambda: now[0])
+    gh = GitHubClient("o/r", http=httpx.Client(base_url="https://api.github.test", transport=transport, auth=auth), auth=auth)
+
+    assert gh.branch_sha("main") == "abc"
+    gh.branch_sha("main")
+    assert len(minted) == 1, "token reused while valid"
+    now[0] += 3600 - 200  # within 5 minutes of expiry
+    gh.branch_sha("main")
+    assert len(minted) == 2, "token renewed before it expires"
+    assert gh.whoami() == "pipeline-agent-test[bot]"
+    assert "BEGIN" not in repr(auth) and "ghs_" not in repr(auth)

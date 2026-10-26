@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from .config import AgentConfig, Settings, load_agent_config
 from .fix.flow import FixFlow
-from .git.github import GitHubClient
+from .git.github import AppTokenAuth, GitHubClient
 from .llm.gateway import LLMGateway
 from .llm.triage import Triage
 from .monitor import Monitor
@@ -40,6 +42,12 @@ def build_gateway(settings: Settings, config: AgentConfig, store: StateStore) ->
 def build_github(settings: Settings, config: AgentConfig) -> GitHubClient:
     if not config.fix.repo:
         raise ValueError("config/fix.yaml: fix.repo is not set")
+    if settings.github_app_id:
+        if not (settings.github_app_installation_id and settings.github_app_private_key_path):
+            raise ValueError("GitHub App auth needs GITHUB_APP_INSTALLATION_ID and GITHUB_APP_PRIVATE_KEY_PATH")
+        key = Path(settings.github_app_private_key_path).read_text(encoding="utf-8")
+        auth = AppTokenAuth(settings.github_app_id, settings.github_app_installation_id, key, settings.github_api_url)
+        return GitHubClient(config.fix.repo, api_url=settings.github_api_url, auth=auth)
     token = EnvSecretResolver().get(settings.github_token_ref)
     return GitHubClient(config.fix.repo, token, settings.github_api_url)
 

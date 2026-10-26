@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import AliasChoices, BaseModel, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .sdk.models import Env
@@ -40,6 +40,15 @@ class Settings(BaseSettings):
     # Fix flow (Phase 3). Off by default; needs LLM + a GitHub token for the agent's identity.
     fix_enabled: bool = False
     github_api_url: str = "https://api.github.com"
+    # Preferred identity: a GitHub App (no extra account, 1-hour tokens, exact permissions).
+    github_app_id: str | None = Field(None, validation_alias=AliasChoices("GITHUB_APP_ID", "AGENT_GITHUB_APP_ID"))
+    github_app_installation_id: str | None = Field(
+        None, validation_alias=AliasChoices("GITHUB_APP_INSTALLATION_ID", "AGENT_GITHUB_APP_INSTALLATION_ID")
+    )
+    github_app_private_key_path: Path | None = Field(
+        None, validation_alias=AliasChoices("GITHUB_APP_PRIVATE_KEY_PATH", "AGENT_GITHUB_APP_PRIVATE_KEY_PATH")
+    )
+    # Fallback identity: a bot account's token.
     github_token_ref: str = "env://GITHUB_TOKEN"
 
 

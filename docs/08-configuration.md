@@ -21,7 +21,8 @@ Configuration lives in two places:
 | `AGENT_LLM_API_KEY_REF` | `env://OPENROUTER_API_KEY` | Secret reference for the LLM key |
 | `AGENT_LLM_TIMEOUT_SECONDS` | `90` | Per request |
 | `AGENT_FIX_ENABLED` | `false` | Phase 3 fix flow (needs `AGENT_LLM_ENABLED=true`) |
-| `AGENT_GITHUB_TOKEN_REF` | `env://GITHUB_TOKEN` | Token of the agent's **own** GitHub identity |
+| `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_PRIVATE_KEY_PATH` | unset | **Preferred identity:** GitHub App (used when `GITHUB_APP_ID` is set) |
+| `AGENT_GITHUB_TOKEN_REF` | `env://GITHUB_TOKEN` | Fallback identity: a bot account's token |
 | `AGENT_GITHUB_API_URL` | `https://api.github.com` | GitHub Enterprise Server: `https://<host>/api/v3` |
 
 The CLI loads `.env` from the working directory into the environment (real environment variables win), so `env://` references such as `env://DATABRICKS_TOKEN` resolve from `.env` too.

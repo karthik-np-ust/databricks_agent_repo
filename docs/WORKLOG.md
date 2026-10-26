@@ -2,6 +2,12 @@
 
 Newest first. Each entry: what was built, how it was verified, what's next.
 
+## 2026-10-26: Agent identity = GitHub App
+- The agent authenticates as GitHub App `pipeline-agent-karthik[bot]` (installed on the repo only): `AppTokenAuth` signs a JWT with the App key, gets a 1-hour installation token and renews it automatically. No second account or email was needed. The App has no Workflows permission.
+- Live check: `pipeline-agent github` → `Token user: pipeline-agent-karthik[bot]`, reads dev/qa/main.
+- The first live call hit a 30 s read timeout (corporate proxy). GitHub reads now retry with back-off; writes are not retried (no duplicates).
+- 125 tests pass.
+
 ## 2026-10-26: Phase 3, fix flow
 - `git/github.py`: REST client (tree listing, file reads, single-commit multi-file changes through the Git Data API, PRs, merges, check runs with failure annotations, workflow runs). Token never in `repr`.
 - `fix/patch.py`: LLM writes whole-file fixes through a `propose_fix` tool. Guards: allowed paths, compiles, `assert_not_null(` count kept, test required, no secrets, limits, one retry with validation feedback.

@@ -106,10 +106,35 @@ The agent opens and merges PRs, so it needs its **own** GitHub identity:
 
 | Option | Effort | When |
 |---|---|---|
-| **Bot account** (second GitHub user) | 10 minutes | Demo |
-| GitHub App (installation token) | 1 hour | Pilot / enterprise (no personal account, fine-grained permissions, short-lived tokens) |
+| **GitHub App** (used for this demo since 2026-10-26) | 10 minutes | Recommended for everything: no extra account or email, exact permissions, 1-hour auto-renewed tokens |
+| Bot account (second GitHub user) | 10 minutes | Only if Apps aren't allowed. GitHub needs a different email per account. |
 
-### Bot account steps
+### GitHub App steps (recommended)
+1. **Create:** your profile → Settings → Developer settings → GitHub Apps → **New GitHub App**.
+   - Name: e.g. `pipeline-agent-karthik`
+   - Homepage: the repo URL
+   - Webhook: **Active** unticked
+2. **Repository permissions** (everything else No access):
+   - Contents: **Read and write**
+   - Pull requests: **Read and write**
+   - Checks, Actions, Commit statuses: Read-only
+   - Metadata: Read-only
+   - **Workflows: No access.** GitHub then rejects any change to `.github/workflows/`.
+3. **Install scope:** Only on this account → **Create GitHub App**. Note the **App ID**.
+4. **Private key:** Private keys → **Generate a private key**. Move the `.pem` **outside the repo** (e.g. `C:\Users\<you>\.secrets\`) and delete the copy in Downloads.
+5. **Install App** → Only select repositories → the repo → Install. The URL ends in `/installations/<Installation ID>`.
+6. **`.env`:**
+   ```
+   GITHUB_APP_ID=<App ID>
+   GITHUB_APP_INSTALLATION_ID=<Installation ID>
+   GITHUB_APP_PRIVATE_KEY_PATH=C:\Users\<you>\.secrets\<file>.pem
+   ```
+7. **Repo variable:** `AGENT_BOT_LOGIN = <app-name>[bot]` (e.g. `pipeline-agent-karthik[bot]`). This turns on the CI path-guard for its PRs.
+8. **Check:** `pipeline-agent github` should print `Token user: pipeline-agent-karthik[bot]` and the branch heads.
+
+How it works: the agent signs a 9-minute JWT with the private key and exchanges it for a 1-hour installation token, which it renews 5 minutes before expiry ([git/github.py](../src/pipeline_agent/git/github.py) `AppTokenAuth`). The key never leaves the laptop or server, and neither the key nor the token appears in logs or `repr`.
+
+### Bot account steps (alternative)
 1. **Create the account.** Sign up at https://github.com/signup, e.g. `karthik-np-ust-bot`, with a different email.
 2. **Give it write access.** In the repo: Settings → Collaborators → **Add people** → the bot → role **Write**. Log in as the bot and accept the invitation.
 3. **Create its token.** As the bot: Settings → Developer settings → Personal access tokens → **Tokens (classic)** → Generate new token:

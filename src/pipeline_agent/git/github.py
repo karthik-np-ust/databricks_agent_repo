@@ -1,16 +1,19 @@
 """GitHub REST client: just the calls the fix flow needs.
 
 `RepoHost` is the interface the fix flow depends on; tests use an in-memory
-fake. Authentication is the agent's own identity (a bot account or GitHub App
-token), never a person's: GitHub does not let anyone approve their own PR, so
-the human gate only works when the agent is a different user.
+fake. Authentication is the agent's own identity, never a person's: GitHub
+does not let anyone approve their own PR, so the human gate only works when
+the agent is a different identity. Preferred: a GitHub App (`AppTokenAuth`);
+fallback: a bot account's token.
 """
 
 from __future__ import annotations
 
 import base64
+import time
 from dataclasses import dataclass
-from typing import Any, Protocol
+from datetime import datetime
+from typing import Any, Callable, Protocol
 
 import httpx
 
@@ -60,25 +63,108 @@ class RepoHost(Protocol):
     def workflow_run(self, workflow: str, branch: str, sha: str) -> WorkflowRun | None: ...
 
 
+_HEADERS = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+
+
+class AppTokenAuth(httpx.Auth):
+    """GitHub App authentication (recommended identity for the agent).
+
+    Signs a 9-minute JWT with the App's private key, exchanges it for a 1-hour
+    installation token, and renews that token 5 minutes before it expires.
+    Permissions are exactly those granted to the App (no Workflows access means
+    GitHub itself rejects any change to .github/workflows).
+    """
+
+    def __init__(
+        self,
+        app_id: str,
+        installation_id: str,
+        private_key: str,
+        api_url: str = "https://api.github.com",
+        http: httpx.Client | None = None,
+        clock: Callable[[], float] = time.time,
+    ):
+        self.app_id = str(app_id)
+        self.installation_id = str(installation_id)
+        self._key = private_key
+        self.api_url = api_url.rstrip("/")
+        self._http = http or httpx.Client(timeout=30)
+        self._clock = clock
+        self._token: str | None = None
+        self._expires_at = 0.0
+
+    def __repr__(self) -> str:  # never show the key or token
+        return f"AppTokenAuth(app_id={self.app_id!r}, installation_id={self.installation_id!r})"
+
+    def app_jwt(self) -> str:
+        import jwt  # PyJWT, only needed for App auth
+
+        now = int(self._clock())
+        # iat 60s in the past tolerates clock drift; GitHub caps exp at 10 minutes.
+        return jwt.encode({"iat": now - 60, "exp": now + 540, "iss": self.app_id}, self._key, algorithm="RS256")
+
+    def _app_call(self, method: str, path: str) -> dict:
+        resp = self._http.request(method, f"{self.api_url}{path}", headers={**_HEADERS, "Authorization": f"Bearer {self.app_jwt()}"})
+        if resp.status_code >= 400:
+            raise GitHubError(resp.status_code, f"GitHub App auth failed: {resp.text[:200]}")
+        return resp.json()
+
+    def token(self) -> str:
+        if self._token is None or self._expires_at - self._clock() < 300:
+            data = self._app_call("POST", f"/app/installations/{self.installation_id}/access_tokens")
+            self._token = data["token"]
+            self._expires_at = datetime.fromisoformat(data["expires_at"].replace("Z", "+00:00")).timestamp()
+        return self._token
+
+    def app_slug(self) -> str:
+        return self._app_call("GET", "/app")["slug"]
+
+    def auth_flow(self, request: httpx.Request):
+        request.headers["Authorization"] = f"Bearer {self.token()}"
+        yield request
+
+
 class GitHubClient:
-    def __init__(self, repo: str, token: str, api_url: str = "https://api.github.com", http: httpx.Client | None = None):
+    def __init__(
+        self,
+        repo: str,
+        token: str | None = None,
+        api_url: str = "https://api.github.com",
+        http: httpx.Client | None = None,
+        auth: AppTokenAuth | None = None,
+    ):
+        if http is None and token is None and auth is None:
+            raise ValueError("GitHubClient needs a token or GitHub App auth")
         self.repo = repo
-        self.http = http or httpx.Client(
-            base_url=api_url,
-            timeout=30,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-        )
+        self.app_auth = auth
+        headers = dict(_HEADERS)
+        if token and auth is None:
+            headers["Authorization"] = f"Bearer {token}"
+        self.http = http or httpx.Client(base_url=api_url, timeout=30, headers=headers, auth=auth)
 
     def __repr__(self) -> str:  # never show the token
         return f"GitHubClient(repo={self.repo!r})"
 
     # plumbing -------------------------------------------------------------
+    # Reads are retried on network errors and 5xx/429 (proxies and GitHub both
+    # hiccup); writes are not retried here, so they can never be duplicated.
+    # The fix flow retries a failed step on the next tick, and its writes are idempotent.
+    READ_RETRIES = 3
+
     def _call(self, method: str, path: str, **kwargs: Any) -> Any:
-        resp = self.http.request(method, f"/repos/{self.repo}{path}", **kwargs)
+        attempts = self.READ_RETRIES if method == "GET" else 1
+        for attempt in range(1, attempts + 1):
+            try:
+                resp = self.http.request(method, f"/repos/{self.repo}{path}", **kwargs)
+            except httpx.TransportError:
+                if attempt == attempts:
+                    raise
+                time.sleep(2 ** attempt)
+                continue
+            if method == "GET" and (resp.status_code >= 500 or resp.status_code == 429) and attempt < attempts:
+                time.sleep(2 ** attempt)
+                continue
+            break
         if resp.status_code >= 400:
             try:
                 message = resp.json().get("message", resp.text)
@@ -99,6 +185,9 @@ class GitHubClient:
         )
 
     def whoami(self) -> str:
+        """Login the agent acts as (`<app-slug>[bot]` for GitHub App auth)."""
+        if self.app_auth is not None:
+            return f"{self.app_auth.app_slug()}[bot]"
         resp = self.http.get("/user")
         if resp.status_code >= 400:
             raise GitHubError(resp.status_code, resp.text[:200])
