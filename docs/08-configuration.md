@@ -112,5 +112,6 @@ Failed attempts count too. When a cap is hit, the incident is escalated and the 
 | `require_test_change` | `true` | A test under `tests/` must be added or changed |
 | `max_files`, `max_file_chars`, `max_context_chars` | 6 / 40000 / 60000 | Limits |
 | `patch_attempts` | 2 | 1 retry with validation errors fed back |
+| `repair_attempts` | 2 | After CI fails on the fix PR: read the CI log, push a corrected commit (then escalate) |
 | `max_concurrent` | 1 | Fixes in flight at once |
 | `max_wait_hours` | 48 | Waiting longer than this in any state → failed, incident escalated |

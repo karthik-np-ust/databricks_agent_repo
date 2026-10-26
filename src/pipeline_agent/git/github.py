@@ -10,6 +10,7 @@ fallback: a bot account's token.
 from __future__ import annotations
 
 import base64
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -260,16 +261,36 @@ class GitHubClient:
         for name in required:
             run = latest.get(name)
             if run and run["status"] == "completed" and run["conclusion"] not in ("success", "skipped", "neutral"):
+                # The job log says *why* (annotations usually only say "exit code 1").
+                excerpt = self.job_log_excerpt(run["id"])
                 notes = [
                     f"{name}: {a.get('message', '')[-1500:]}"
                     for a in self._call("GET", f"/check-runs/{run['id']}/annotations")
-                    if a.get("annotation_level") == "failure"
+                    if a.get("annotation_level") == "failure" and "exit code" not in a.get("message", "")
                 ]
+                if excerpt:
+                    notes.append(f"{name} log:\n{excerpt}")
                 failures.extend(notes or [f"{name}: {run['conclusion']}"])
         if failures:
             return ChecksStatus("failure", details, failures)
         done = all(n in latest and latest[n]["status"] == "completed" for n in required)
         return ChecksStatus("success" if done else "pending", details, [])
+
+    _LOG_SIGNAL = re.compile(r"(FAILED|ERROR|Error|error:|Exception|Traceback|^E\s|assert|NameError|AttributeError|SyntaxError| failed| passed)")
+    _LOG_TS = re.compile(r"^\d{4}-\d\d-\d\dT[\d:.]+Z ")
+
+    def job_log_excerpt(self, job_id: int, max_lines: int = 60) -> str:
+        """Lines from a failed Actions job log that explain the failure (needs Actions: read)."""
+        try:
+            resp = self.http.get(f"/repos/{self.repo}/actions/jobs/{job_id}/logs", follow_redirects=True)
+        except httpx.HTTPError:
+            return ""
+        if resp.status_code >= 400:
+            return ""
+        lines = [self._LOG_TS.sub("", line) for line in resp.text.splitlines()]
+        # pytest prints the useful part last: failure details, then the short summary.
+        keep = [line for line in lines if self._LOG_SIGNAL.search(line) and "##[" not in line]
+        return "\n".join(keep[-max_lines:])[-6000:]
 
     def workflow_run(self, workflow: str, branch: str, sha: str) -> WorkflowRun | None:
         data = self._call(

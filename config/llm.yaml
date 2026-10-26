@@ -10,7 +10,7 @@ llm:
     - poolside/laguna-s-2.1:free
     - nvidia/nemotron-3-ultra-550b-a55b:free
     - cohere/north-mini-code:free
-  max_tokens: 1500
+  max_tokens: 4000            # free "reasoning" models think before answering; 1500 truncated them
   fix_max_tokens: 12000       # whole-file rewrites need room
   temperature: 0.1
   max_context_chars: 12000

@@ -268,11 +268,14 @@ class Monitor:
             f"Diagnosis: {incident.pipeline_name}", diag.summary,
             Severity.CRITICAL if diag.suspicious_content else Severity.INFO, facts, incident.url,
         ))
+        # The deterministic rule class decides (fix_eligible = code failure + auto_fix + CODE
+        # capability). The LLM can only veto by saying the fix is a rerun or a config/permission
+        # change; an unusable or unsure diagnosis does not block the fix flow.
         if (
             self.fixer is not None
             and incident.fix_eligible
             and incident.status == "open"
-            and diag.fix_type in ("code_change", "data_fix")
+            and diag.fix_type not in ("rerun", "config_or_permission")
         ):
             self.fixer.start(incident.id)
         return diag

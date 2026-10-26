@@ -69,6 +69,34 @@ def test_checks_summary_and_failure_annotations():
     assert client(handler).checks("sha", ["agent-tests", "pipeline-tests"]).state == "pending"
 
 
+def test_failed_check_includes_job_log_excerpt():
+    log = "\n".join([
+        "2026-10-26T07:30:01.0000000Z ##[group]Run pytest",
+        "2026-10-26T07:30:02.0000000Z collected 6 items",
+        "2026-10-26T07:30:09.0000000Z E       AttributeError: module 'pyspark.sql.functions' has no attribute 'try_cast'",
+        "2026-10-26T07:30:09.1000000Z FAILED sample_pipelines/tests/test_transforms.py::test_bad_qty",
+        "2026-10-26T07:30:09.2000000Z 1 failed, 3 passed in 11.00s",
+    ])
+    runs = {"check_runs": [{"id": 7, "name": "pipeline-tests", "status": "completed", "conclusion": "failure"}]}
+
+    def handler(req):
+        if req.url.path.endswith("/check-runs"):
+            return httpx.Response(200, json=runs)
+        if req.url.path.endswith("/annotations"):
+            return httpx.Response(200, json=[{"annotation_level": "failure", "message": "Process completed with exit code 1."}])
+        if req.url.path.endswith("/actions/jobs/7/logs"):
+            return httpx.Response(302, headers={"Location": "https://logs.example/job7.txt"})
+        if req.url.host == "logs.example":
+            return httpx.Response(200, text=log)
+        return httpx.Response(404, json={"message": "unexpected"})
+
+    st = client(handler).checks("sha", ["pipeline-tests"])
+    assert st.state == "failure" and len(st.failures) == 1, "useless 'exit code 1' annotation dropped"
+    text = st.failures[0]
+    assert "no attribute 'try_cast'" in text and "1 failed, 3 passed" in text
+    assert "collected 6 items" not in text and "2026-10-26T" not in text
+
+
 def test_read_file_decodes_and_404_is_none():
     def handler(req):
         if "missing" in req.url.path:
