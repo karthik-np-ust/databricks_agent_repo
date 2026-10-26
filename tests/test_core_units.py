@@ -102,6 +102,28 @@ def test_p95():
     assert p95([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]) == 20
 
 
+def test_trusted_facts_are_not_redacted_but_free_text_is():
+    n = Notification(
+        "Failed", "card 4111 1111 1111 1111", facts={"run_id": "915546917982770", "reason": "id 4111111111111111"}
+    ).redacted()
+    assert n.facts["run_id"] == "915546917982770", "Databricks run IDs must stay readable"
+    assert "4111111111111111" not in n.facts["reason"] and "4111" not in n.summary
+
+
+def test_condense_logs_keeps_error_and_drops_frame_noise():
+    from pipeline_agent.llm.context import condense_logs
+
+    frames = "\n".join(f"\tat com.databricks.sql.Foo.bar{i}(Foo.scala:{i})" for i in range(300))
+    text = "Task transform_silver failed\n[CAST_INVALID_INPUT] The value 'abc' cannot be cast\n" + frames
+    text += "\n[CAST_INVALID_INPUT] The value 'abc' cannot be cast"  # duplicate message
+    out = condense_logs(text, 2000)
+    assert out.splitlines()[1].startswith("[CAST_INVALID_INPUT]")
+    assert out.count("[CAST_INVALID_INPUT]") == 1
+    assert out.count("\tat ") == 5 and "further stack frames omitted" in out
+    long = condense_logs("ERROR first line\n" + "x" * 50_000, 1000)
+    assert long.startswith("ERROR first line") and len(long) <= 1000
+
+
 def test_notification_payloads_are_redacted():
     n = Notification("Failed", "token dapiTESTnotARealTokenXXXXXXXXXXXXXX", facts={"run": "1"}, url="https://x")
     assert "dapiTEST" not in str(teams_payload(n.redacted()))

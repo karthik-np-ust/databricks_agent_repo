@@ -151,6 +151,8 @@ def test_failure_context_reads_failed_task_output(inst):
     ctx = inst.logs.failure_context(failed)
     assert [t.task_key for t in ctx.tasks] == ["transform_silver"]
     assert ctx.error_class == ErrorClass.CODE and ctx.matched_rule == "cast_invalid_input"
+    # Headline is the task's real error, not the generic run-level message.
+    assert ctx.error_message.startswith("[CAST_INVALID_INPUT]")
 
 
 def test_cancel_and_rerun_pass_ids_and_parameters(inst):

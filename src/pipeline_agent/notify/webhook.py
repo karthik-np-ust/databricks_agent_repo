@@ -20,6 +20,11 @@ class Severity(StrEnum):
     CRITICAL = "critical"
 
 
+# Facts the agent fills from its own metadata (never from logs). Redacting them
+# only hurts: e.g. 15-digit Databricks run IDs look like card numbers.
+TRUSTED_FACTS = frozenset({"platform", "pipeline", "env", "run_id", "new_run_id", "incident", "decision", "error_class", "mode"})
+
+
 @dataclass
 class Notification:
     title: str
@@ -33,7 +38,7 @@ class Notification:
             title=redact_text(self.title),
             summary=redact_text(self.summary),
             severity=self.severity,
-            facts={k: redact_text(str(v)) for k, v in self.facts.items()},
+            facts={k: str(v) if k in TRUSTED_FACTS else redact_text(str(v)) for k, v in self.facts.items()},
             url=self.url,
         )
 
