@@ -33,6 +33,7 @@ except ImportError:
 
 ENVS = ("dev", "qa", "prod")
 JOB_PREFIX = {"dev": "[dev] ", "qa": "[qa] ", "prod": ""}
+PIPELINES_REPO_URL = "https://github.com/karthik-np-ust/orders-pipelines"
 # Databricks Git folders of the pipelines repo, one per environment (see docs/15-databricks-setup.md).
 GIT_FOLDERS = {
     "dev": "/Workspace/Shared/orders-pipelines-dev",
