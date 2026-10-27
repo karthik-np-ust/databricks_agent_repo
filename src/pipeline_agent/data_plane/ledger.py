@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from ..sdk.models import utcnow
@@ -50,7 +50,20 @@ class ExecutionLedger:
             existing = self.get(key)
             return Reservation(key, existing.state, False, existing.result or {})
 
-    def finish(self, key: str, state: Literal["SUCCESS", "FAILED"], result: dict[str, Any] | None = None, now: datetime | None = None) -> None:
+    def count_since(self, since: datetime, capabilities: tuple[str, ...], target_prefix: str = "") -> int:
+        """Executions (anything but FAILED) since ``since``: input for rerun caps and the circuit breaker."""
+        with self.store.session() as s:
+            q = select(func.count()).select_from(LedgerRow).where(
+                LedgerRow.reserved_at >= since, LedgerRow.capability.in_(capabilities), LedgerRow.state != "FAILED"
+            )
+            if target_prefix:
+                q = q.where(LedgerRow.target.startswith(target_prefix))
+            return s.scalar(q) or 0
+
+    def finish(
+        self, key: str, state: Literal["SUCCESS", "FAILED", "UNKNOWN"], result: dict[str, Any] | None = None, now: datetime | None = None
+    ) -> None:
+        """UNKNOWN: the call went out but its effect couldn't be confirmed (post-condition failed)."""
         with self.store.session() as s:
             changed = s.execute(
                 update(LedgerRow)

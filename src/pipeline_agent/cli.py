@@ -212,6 +212,34 @@ def _cmd_console(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_dataplane(args: argparse.Namespace) -> int:
+    from .runtime import build_data_plane
+
+    settings = Settings()
+    plane = build_data_plane(settings)
+    print(f"Data plane {plane.holder}: {len(plane.observer.instances)} platform(s), trusting key(s) {', '.join(plane.executor.verifier.key_ids)}")
+    try:
+        while True:
+            report = plane.tick()
+            if not report.leader:
+                print(f"{report.started_at:%H:%M:%S}Z  standby (another data plane holds the lease)")
+            else:
+                print(f"{report.started_at:%H:%M:%S}Z  runs seen: {report.observed.runs_seen}  events: {len(report.observed.events)}  actions: {len(report.results)}")
+                for kind, key in report.observed.events:
+                    print(f"  event   {kind:<13} {key}")
+                for r in report.results:
+                    print(f"  action  {r.status:<9} {r.request_id}  {r.error or ''}")
+                for key in report.swept_unknown:
+                    print(f"  UNKNOWN {key} (executor stopped mid-call; check the platform)")
+                for err in report.observed.errors:
+                    print(f"  ERROR {err}")
+            if args.once:
+                return 1 if report.observed.errors else 0
+            time.sleep(settings.poll_interval_seconds)
+    finally:
+        plane.stop()
+
+
 def _cmd_keys(args: argparse.Namespace) -> int:
     from .security.signing import PRIVATE_KEY_FILE, Signer
 
@@ -274,6 +302,9 @@ def main(argv: list[str] | None = None) -> int:
     p_audit = sub.add_parser("audit", help="show the audit log")
     p_audit.add_argument("--limit", type=int, default=50)
     p_audit.set_defaults(func=_cmd_audit)
+    p_dp = sub.add_parser("dataplane", help="run the data plane: observe platforms, execute signed ActionRequests")
+    p_dp.add_argument("--once", action="store_true", help="one tick, then exit")
+    p_dp.set_defaults(func=_cmd_dataplane)
     p_keys = sub.add_parser("keys", help="generate the ActionRequest signing key pair")
     p_keys.add_argument("action", choices=["generate"])
     p_keys.add_argument("--out", type=Path, default=Path("var/keys"))

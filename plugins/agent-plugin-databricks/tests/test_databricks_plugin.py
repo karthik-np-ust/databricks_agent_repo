@@ -195,3 +195,93 @@ def test_billing_table_costs():
 
 def test_healthcheck(inst):
     assert inst.healthcheck().startswith("ok")
+
+
+# --- ActionProvider (data plane) -------------------------------------------------------
+
+
+def action_client():
+    client = fake_client()
+    jobs = client.jobs
+    jobs.repaired, jobs.submitted = [], []
+    jobs.repair_run = lambda run_id, rerun_all_failed_tasks: (jobs.repaired.append((run_id, rerun_all_failed_tasks)), NS(response=NS(repair_id=55)))[1]
+    jobs.submit = lambda **kw: (jobs.submitted.append(kw), NS(response=NS(run_id=777)))[1]
+    jobs.get = lambda job_id: NS(settings=NS(as_dict=lambda: {"name": "orders_pipeline", "tasks": [{"task_key": "a"}]}))
+    heads = {"head": "old0000"}
+    client.repos = NS(
+        updates=[],
+        get=lambda repo_id: NS(branch="main", head_commit_id=heads["head"]),
+    )
+
+    def update(repo_id, branch):
+        client.repos.updates.append((repo_id, branch))
+        heads["head"] = "new1111"
+
+    client.repos.update = update
+    client.workspace = NS(get_status=lambda path: NS(object_id=4242, object_type=NS(value="DIRECTORY")))
+    client.statements = []
+    client.statement_execution = NS(
+        execute_statement=lambda **kw: (
+            client.statements.append(kw["statement"]),
+            NS(status=NS(state=NS(value="SUCCEEDED")), result=NS(data_array=[["120", "1", "0", "2"]])),
+        )[1]
+    )
+    return client
+
+
+ACTION_CONFIG = {
+    **CONFIG, "warehouse_id": "wh1", "git_url": "https://github.com/org/orders-pipelines",
+    "git_folders": {"prod": "/Workspace/Shared/orders-pipelines_prod"},
+}
+
+
+@pytest.fixture
+def act():
+    return DatabricksPlugin().build("dbx", ACTION_CONFIG, {"token": FAKE_TOKEN}, client=action_client())
+
+
+def test_actions_capability_and_get_run(act):
+    from pipeline_agent.sdk import Capability
+
+    assert act.supports(Capability.ACTIONS)
+    assert act.actions.get_run("11").status == RunStatus.FAILED
+
+
+def test_repair_reruns_failed_tasks_only(act):
+    failed = act.actions.get_run("11")
+    out = act.actions.repair(failed)
+    assert act.backend.client.jobs.repaired == [(11, True)]
+    assert out == {"run_id": "11", "repair_id": "55", "pipeline_id": "1"}
+
+
+def test_sync_code_pulls_the_git_folder_found_by_path(act):
+    out = act.actions.sync_code("prod")
+    assert act.backend.client.repos.updates == [(4242, "main")]
+    assert (out["head_before"], out["head"], out["branch"]) == ("old0000", "new1111", "main")
+    with pytest.raises(ValueError, match="no Git folder"):
+        act.actions.sync_code("qa")
+
+
+def test_run_tests_submits_a_sequential_git_source_run(act):
+    from databricks.sdk.service.jobs import GitProvider, RunIf, Source
+
+    out = act.actions.run_tests("fix/incident-1", ["tests/test_transform_silver.py", "tests/test_build_gold"], {"catalog": "dev"})
+    [kw] = act.backend.client.jobs.submitted
+    assert out["run_id"] == "777"
+    assert kw["git_source"].git_branch == "fix/incident-1" and kw["git_source"].git_provider == GitProvider.GIT_HUB
+    first, second = kw["tasks"]
+    assert first.notebook_task.notebook_path == "tests/test_transform_silver" and first.notebook_task.source == Source.GIT
+    assert first.depends_on is None
+    assert second.depends_on[0].task_key == first.task_key and second.run_if == RunIf.ALL_DONE
+
+
+def test_profile_counts_and_rejects_bad_identifiers(act):
+    out = act.actions.profile("prod.silver.orders", ["order_id"], ["store_id", "qty"])
+    assert out == {"table": "prod.silver.orders", "rows": 120, "duplicate_keys": 1, "nulls": {"store_id": 0, "qty": 2}}
+    assert "COUNT(DISTINCT order_id)" in act.backend.client.statements[0]
+    with pytest.raises(ValueError, match="invalid identifier"):
+        act.actions.profile("prod.silver.orders; DROP TABLE x", [], [])
+
+
+def test_definition_hash_is_stable(act):
+    assert act.actions.definition_hash("1") == act.actions.definition_hash("1")

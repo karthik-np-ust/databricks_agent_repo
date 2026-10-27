@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from .models import CodeRef, CostRecord, FailureContext, Pipeline, Run, RunEvent, RunRef
 
@@ -21,6 +21,7 @@ class Capability(StrEnum):
     COST = "cost"
     CODE = "code"
     EVENTS = "events"
+    ACTIONS = "actions"  # data-plane actions (redesign): repair, code sync, tests, profiles
 
 
 @runtime_checkable
@@ -62,6 +63,37 @@ class CodeLocator(Protocol):
     """CODE: where the pipeline's source lives, so the agent can debug and fix it."""
 
     def code_ref(self, pipeline: Pipeline) -> CodeRef | None: ...
+
+
+@runtime_checkable
+class ActionProvider(Protocol):
+    """ACTIONS: what the data plane's capability router needs beyond cancel/rerun.
+
+    Long-running work (repair, tests) returns as soon as the platform accepted it; the data
+    plane's observer watches the run and reports the outcome.
+    """
+
+    def get_run(self, run_id: str) -> Run: ...
+
+    def repair(self, run: Run) -> dict[str, Any]:
+        """Re-run only the failed tasks of ``run``. Returns at least ``run_id``."""
+        ...
+
+    def sync_code(self, env: str) -> dict[str, Any]:
+        """Update the env's checked-out code (e.g. a Git folder) to its branch head. Returns ``head``."""
+        ...
+
+    def run_tests(self, branch: str, notebooks: list[str], params: dict[str, str]) -> dict[str, Any]:
+        """One-time run of test notebooks from ``branch``. Returns at least ``run_id``."""
+        ...
+
+    def profile(self, table: str, keys: list[str], not_null: list[str]) -> dict[str, Any]:
+        """Read-only: ``rows``, ``duplicate_keys`` and ``nulls`` per column."""
+        ...
+
+    def definition_hash(self, pipeline_id: str) -> str:
+        """Fingerprint of the pipeline's definition, to detect drift between decision and execution."""
+        ...
 
 
 @runtime_checkable

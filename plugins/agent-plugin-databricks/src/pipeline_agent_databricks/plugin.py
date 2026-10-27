@@ -9,6 +9,9 @@ with no known prefix are treated as prod.
 from __future__ import annotations
 
 import fnmatch
+import hashlib
+import json
+import re
 from datetime import date, datetime, timedelta, timezone
 from importlib import resources
 from typing import Any, ClassVar
@@ -58,6 +61,11 @@ class DatabricksConfig(BaseModel):
     repo: str | None = None
     code_root: str = "notebooks"
     code_paths: dict[str, str] = Field(default_factory=dict, description="Job name -> path in the repo")
+    # Data-plane actions (redesign): where each env's code is checked out, and the repo tests run from.
+    git_url: str | None = Field(None, description="https URL of the pipelines repo (tests run from its branches)")
+    git_folders: dict[str, str] = Field(
+        default_factory=dict, description="env -> Databricks Git folder path, e.g. dev: /Workspace/Shared/orders-pipelines-dev"
+    )
 
 
 _RESULT_MAP = {
@@ -102,7 +110,7 @@ def _ms_to_dt(ms: int | None) -> datetime | None:
 
 
 class DatabricksBackend:
-    """RunSource, RunController, LogProvider, CostProvider and CodeLocator for one workspace."""
+    """RunSource, RunController, LogProvider, CostProvider, CodeLocator and ActionProvider for one workspace."""
 
     def __init__(self, instance_id: str, config: DatabricksConfig, client: Any):
         self.instance_id = instance_id
@@ -292,6 +300,79 @@ class DatabricksBackend:
         branch = {Env.DEV: "dev", Env.QA: "qa", Env.PROD: "main"}[pipeline.env]
         return CodeRef(repo=self.config.repo, path=path, ref=branch, deploy_target=pipeline.env.value)
 
+    # ActionProvider (data plane) -----------------------------------------
+    def get_run(self, run_id: str) -> Run:
+        return self._to_run(self.client.jobs.get_run(run_id=int(run_id)))
+
+    def repair(self, run: Run) -> dict[str, Any]:
+        waiter = self.client.jobs.repair_run(run_id=int(run.run_id), rerun_all_failed_tasks=True)
+        repair_id = getattr(getattr(waiter, "response", None), "repair_id", None) or getattr(waiter, "repair_id", None)
+        return {"run_id": run.run_id, "repair_id": str(repair_id) if repair_id else None, "pipeline_id": run.pipeline_id}
+
+    def sync_code(self, env: str) -> dict[str, Any]:
+        path = self.config.git_folders.get(env)
+        if not path:
+            raise ValueError(f"no Git folder configured for env {env!r} (config.git_folders)")
+        # Free Edition reports Git folders as DIRECTORY and repos.list skips them; repos.get(object_id) works (R0).
+        repo_id = self.client.workspace.get_status(path).object_id
+        before = self.client.repos.get(repo_id)
+        self.client.repos.update(repo_id, branch=before.branch)  # pull the branch head
+        after = self.client.repos.get(repo_id)
+        return {"path": path, "branch": after.branch, "head_before": before.head_commit_id, "head": after.head_commit_id}
+
+    def run_tests(self, branch: str, notebooks: list[str], params: dict[str, str]) -> dict[str, Any]:
+        from databricks.sdk.service.jobs import GitProvider, GitSource, NotebookTask, RunIf, Source, SubmitTask, TaskDependency
+
+        if not self.config.git_url:
+            raise ValueError("config.git_url is not set")
+        tasks, previous = [], None
+        for nb in notebooks:
+            key = re.sub(r"[^A-Za-z0-9_-]", "_", nb.rsplit("/", 1)[-1])[:100]
+            # Sequential (Free Edition: max 5 concurrent tasks) but every test runs even if an earlier one failed.
+            tasks.append(
+                SubmitTask(
+                    task_key=key,
+                    notebook_task=NotebookTask(notebook_path=nb.removesuffix(".py"), source=Source.GIT, base_parameters=params),
+                    depends_on=[TaskDependency(task_key=previous)] if previous else None,
+                    run_if=RunIf.ALL_DONE if previous else None,
+                )
+            )
+            previous = key
+        waiter = self.client.jobs.submit(
+            run_name=f"pipeline-agent tests @ {branch}",
+            git_source=GitSource(git_url=self.config.git_url, git_provider=GitProvider.GIT_HUB, git_branch=branch),
+            tasks=tasks,
+        )
+        run_id = getattr(getattr(waiter, "response", None), "run_id", None) or waiter.run_id
+        return {"run_id": str(run_id), "branch": branch, "notebooks": notebooks}
+
+    _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*){0,2}$")
+
+    def profile(self, table: str, keys: list[str], not_null: list[str]) -> dict[str, Any]:
+        for name in [table, *keys, *not_null]:
+            if not self._IDENT.match(name):
+                raise ValueError(f"invalid identifier {name!r}")
+        if not self.config.warehouse_id:
+            raise ValueError("data.profile needs a SQL warehouse (secrets.warehouse_id)")
+        dup = f"COUNT(*) - COUNT(DISTINCT {', '.join(keys)})" if keys else "0"
+        nulls = "".join(f", COUNT_IF({c} IS NULL)" for c in not_null)
+        resp = self.client.statement_execution.execute_statement(
+            statement=f"SELECT COUNT(*), {dup}{nulls} FROM {table}", warehouse_id=self.config.warehouse_id, wait_timeout="30s"
+        )
+        state = _enum_value(resp.status.state) if resp.status else None
+        if state != "SUCCEEDED":
+            raise RuntimeError(f"profile query did not succeed: {state}")
+        row = resp.result.data_array[0]
+        return {
+            "table": table, "rows": int(row[0]), "duplicate_keys": int(row[1]),
+            "nulls": {c: int(v) for c, v in zip(not_null, row[2:])},
+        }
+
+    def definition_hash(self, pipeline_id: str) -> str:
+        settings = self.client.jobs.get(job_id=int(pipeline_id)).settings
+        data = settings.as_dict() if hasattr(settings, "as_dict") else vars(settings)
+        return hashlib.sha256(json.dumps(data, sort_keys=True, default=str).encode()).hexdigest()
+
     # health --------------------------------------------------------------
     def healthcheck(self) -> str:
         self.client.current_user.me()
@@ -310,8 +391,10 @@ class DatabricksPlugin(PlatformPlugin):
         version="0.1.0",
         plugin_api_version=PLUGIN_API_VERSION,
         display_name="Databricks",
-        description="Databricks Jobs (Jobs API 2.2): monitor, cancel, rerun, logs, cost, code location",
-        capabilities={Capability.MONITOR, Capability.CANCEL, Capability.RERUN, Capability.LOGS, Capability.COST, Capability.CODE},
+        description="Databricks Jobs (Jobs API 2.2): monitor, cancel, rerun, repair, logs, cost, code location, Git-folder sync, tests",
+        capabilities={
+            Capability.MONITOR, Capability.CANCEL, Capability.RERUN, Capability.LOGS, Capability.COST, Capability.CODE, Capability.ACTIONS,
+        },
         config_schema=DatabricksConfig.model_json_schema(),
         secrets=["token", "host", "warehouse_id"],
     )
@@ -340,6 +423,7 @@ class DatabricksPlugin(PlatformPlugin):
             logs=backend,
             costs=backend,
             code=backend if cfg.repo else None,
+            actions=backend,
             error_rules=_rules(),
             healthcheck=backend.healthcheck,
         )

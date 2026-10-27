@@ -1,6 +1,7 @@
 """Plugin SDK: everything a platform plugin needs, and nothing platform-specific."""
 
 from .capabilities import (
+    ActionProvider,
     Capability,
     CodeLocator,
     CostProvider,
@@ -27,6 +28,7 @@ from .models import (
 from .plugin import CapabilityNotSupported, PlatformInstance, PlatformPlugin, PluginManifest, SecretResolver
 
 __all__ = [
+    "ActionProvider",
     "Capability",
     "CapabilityNotSupported",
     "CodeLocator",

@@ -41,6 +41,9 @@ class ActionRequest(BaseModel):
     incident_id: int | None = None
     level: int  # autonomy level the policy granted
     policy_bundle: str  # sha256 of the policy bundle the decision was made with
+    # The policy input, so the data plane can re-evaluate the same decision locally.
+    pattern: str | None = None  # failure pattern: transient | code | infra | unknown | slow
+    rule: str | None = None  # KEDB / classifier rule name
     approval: Approval
     reason: str = ""
     issued_at: datetime = Field(default_factory=utcnow)

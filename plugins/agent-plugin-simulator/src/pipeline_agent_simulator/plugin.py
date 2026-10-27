@@ -10,6 +10,7 @@ Optional ``state_file`` persists runs between processes, so repeated
 
 from __future__ import annotations
 
+import hashlib
 import json
 import random
 from datetime import datetime, timedelta
@@ -72,6 +73,15 @@ class SimulatorConfig(BaseModel):
     state_file: str | None = None
     seed: int = 7
     repo: str | None = "example/demo-pipelines"
+    # Data-plane actions (redesign)
+    fix_on_sync: bool = True  # code.sync "deploys a fix": fail_code pipelines of that env succeed afterwards
+    branch_heads: dict[str, str] = Field(default_factory=dict)  # env -> commit the Git folder ends up on
+    test_outcomes: dict[str, Literal["pass", "fail"]] = Field(default_factory=dict)  # branch -> outcome (default pass)
+    test_duration_seconds: int = 120
+    profiles: dict[str, dict[str, Any]] = Field(default_factory=dict)  # table -> profile to report
+
+
+TESTS = "__tests__"
 
 
 def _iso(dt: datetime | None) -> str | None:
@@ -83,7 +93,7 @@ def _parse(value: str | None) -> datetime | None:
 
 
 class SimulatorBackend:
-    """Implements RunSource, RunController, LogProvider, CostProvider and CodeLocator."""
+    """Implements RunSource, RunController, LogProvider, CostProvider, CodeLocator and ActionProvider."""
 
     def __init__(self, instance_id: str, config: SimulatorConfig, clock: Callable[[], datetime] = utcnow):
         self.instance_id = instance_id
@@ -93,6 +103,8 @@ class SimulatorBackend:
         self._by_name = {p.name: p for p in config.pipelines}
         self.runs: list[dict[str, Any]] = []
         self.attempts: dict[str, int] = {}
+        self.fixed: set[str] = set()  # "<env>:<pipeline>" whose code was fixed by a sync
+        self.heads: dict[str, str] = {}
         self._next_id = 1
         self._load()
         if config.start_on_boot and not self.runs:
@@ -104,29 +116,35 @@ class SimulatorBackend:
         if self.config.state_file and Path(self.config.state_file).exists():
             data = json.loads(Path(self.config.state_file).read_text(encoding="utf-8"))
             self.runs, self.attempts, self._next_id = data["runs"], data["attempts"], data["next_id"]
+            self.fixed, self.heads = set(data.get("fixed", [])), data.get("heads", {})
 
     def _save(self) -> None:
         if self.config.state_file:
-            data = {"runs": self.runs, "attempts": self.attempts, "next_id": self._next_id}
+            data = {"runs": self.runs, "attempts": self.attempts, "next_id": self._next_id, "fixed": sorted(self.fixed), "heads": self.heads}
             Path(self.config.state_file).write_text(json.dumps(data, indent=2), encoding="utf-8")
 
     # simulation ----------------------------------------------------------
-    def trigger(self, name: str, triggered_by: str = "manual", params: dict[str, str] | None = None) -> dict[str, Any]:
-        p = self._by_name[name]
-        attempt = self.attempts.get(name, 0)
-        self.attempts[name] = attempt + 1
-        start = self.clock()
-        duration, outcome, error = p.duration_seconds, "succeeded", None
+    def _outcome(self, p: SimPipeline) -> tuple[int, str, str | None]:
+        """(duration, outcome, error) of the next attempt of ``p``."""
+        attempt = self.attempts.get(p.name, 0)
+        self.attempts[p.name] = attempt + 1
+        duration, outcome = p.duration_seconds, "succeeded"
         if p.behaviour == "slow":
             duration = p.slow_duration_seconds
-        elif p.behaviour in ("fail_code", "fail_permission"):
+        elif p.behaviour == "fail_code" and f"{p.env.value}:{p.name}" not in self.fixed:
+            outcome = "failed"
+        elif p.behaviour == "fail_permission":
             outcome = "failed"
         elif p.behaviour == "fail_transient" and attempt < p.fail_attempts:
             outcome = "failed"
         elif p.behaviour == "flaky" and self._rng.random() < p.flaky_rate:
             outcome = "failed"
-        if outcome == "failed":
-            error = p.error_message or DEFAULT_ERRORS[p.behaviour]
+        error = (p.error_message or DEFAULT_ERRORS[p.behaviour]) if outcome == "failed" else None
+        return duration, outcome, error
+
+    def trigger(self, name: str, triggered_by: str = "manual", params: dict[str, str] | None = None) -> dict[str, Any]:
+        start = self.clock()
+        duration, outcome, error = self._outcome(self._by_name[name])
         run = {
             "run_id": str(self._next_id),
             "pipeline": name,
@@ -144,7 +162,7 @@ class SimulatorBackend:
         return run
 
     def _to_run(self, raw: dict[str, Any], now: datetime) -> Run:
-        p = self._by_name[raw["pipeline"]]
+        p = self._by_name.get(raw["pipeline"]) or SimPipeline(name=raw["pipeline"], env=Env(raw.get("env", "dev")))
         start, planned_end, cancelled = _parse(raw["start"]), _parse(raw["planned_end"]), _parse(raw["cancelled_at"])
         if cancelled:
             status, end = RunStatus.CANCELLED, cancelled
@@ -176,7 +194,7 @@ class SimulatorBackend:
 
     def list_runs(self, since: datetime, active_only: bool = False) -> list[Run]:
         now = self.clock()
-        runs = [self._to_run(r, now) for r in self.runs]
+        runs = [self._to_run(r, now) for r in self.runs if r["pipeline"] != TESTS]  # one-time test runs aren't pipelines
         if active_only:
             return [r for r in runs if r.status.is_active]
         return [r for r in runs if r.status.is_active or (r.end_time and r.end_time >= since)]
@@ -223,6 +241,55 @@ class SimulatorBackend:
             )
         return records
 
+    # ActionProvider (data plane) -----------------------------------------
+    def _raw(self, run_id: str) -> dict[str, Any]:
+        for raw in self.runs:
+            if raw["run_id"] == str(run_id):
+                return raw
+        raise KeyError(f"run {run_id} not found")
+
+    def get_run(self, run_id: str) -> Run:
+        return self._to_run(self._raw(run_id), self.clock())
+
+    def repair(self, run: Run) -> dict[str, Any]:
+        raw = self._raw(run.run_id)
+        duration, outcome, error = self._outcome(self._by_name[raw["pipeline"]])
+        raw["repairs"] = raw.get("repairs", 0) + 1
+        raw.update(planned_end=_iso(self.clock() + timedelta(seconds=duration)), outcome=outcome, error=error, cancelled_at=None)
+        self._save()
+        return {"run_id": run.run_id, "repair_id": f"{run.run_id}-r{raw['repairs']}", "pipeline_id": run.pipeline_id}
+
+    def sync_code(self, env: str) -> dict[str, Any]:
+        before = self.heads.get(env)
+        self.heads[env] = self.config.branch_heads.get(env, f"sim-{env}-head")
+        if self.config.fix_on_sync:
+            self.fixed |= {f"{env}:{p.name}" for p in self.config.pipelines if p.env.value == env and p.behaviour == "fail_code"}
+        self._save()
+        branch = "main" if env == "prod" else env
+        return {"path": f"sim://{self.instance_id}/{env}", "branch": branch, "head_before": before, "head": self.heads[env]}
+
+    def run_tests(self, branch: str, notebooks: list[str], params: dict[str, str]) -> dict[str, Any]:
+        start = self.clock()
+        failed = self.config.test_outcomes.get(branch, "pass") == "fail"
+        raw = {
+            "run_id": str(self._next_id), "pipeline": TESTS, "env": "dev", "start": _iso(start),
+            "planned_end": _iso(start + timedelta(seconds=self.config.test_duration_seconds)),
+            "outcome": "failed" if failed else "succeeded",
+            "error": f"AssertionError: {notebooks[0]} failed on {branch}" if failed else None,
+            "cancelled_at": None, "triggered_by": "agent", "params": {"branch": branch, **params},
+        }
+        self._next_id += 1
+        self.runs.append(raw)
+        self._save()
+        return {"run_id": raw["run_id"], "branch": branch, "notebooks": notebooks}
+
+    def profile(self, table: str, keys: list[str], not_null: list[str]) -> dict[str, Any]:
+        default = {"rows": 100, "duplicate_keys": 0, "nulls": {c: 0 for c in not_null}}
+        return {"table": table, **self.config.profiles.get(table, default)}
+
+    def definition_hash(self, pipeline_id: str) -> str:
+        return hashlib.sha256(self._by_name[pipeline_id].model_dump_json().encode()).hexdigest()
+
     # CodeLocator ---------------------------------------------------------
     def code_ref(self, pipeline: Pipeline) -> CodeRef | None:
         p = self._by_name.get(pipeline.pipeline_id)
@@ -244,7 +311,9 @@ class SimulatorPlugin(PlatformPlugin):
         plugin_api_version=PLUGIN_API_VERSION,
         display_name="Simulator",
         description="Simulated pipelines for demos and tests",
-        capabilities={Capability.MONITOR, Capability.CANCEL, Capability.RERUN, Capability.LOGS, Capability.COST, Capability.CODE},
+        capabilities={
+            Capability.MONITOR, Capability.CANCEL, Capability.RERUN, Capability.LOGS, Capability.COST, Capability.CODE, Capability.ACTIONS,
+        },
         config_schema=SimulatorConfig.model_json_schema(),
         secrets=[],
     )
@@ -274,6 +343,7 @@ class SimulatorPlugin(PlatformPlugin):
             logs=_Logs(),
             costs=backend,
             code=backend,
+            actions=backend,
             error_rules=rules,
             healthcheck=lambda: f"ok ({len(backend.config.pipelines)} simulated pipelines)",
         )

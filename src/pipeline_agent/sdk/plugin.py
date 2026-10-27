@@ -8,6 +8,7 @@ from typing import Any, Callable, ClassVar, Protocol
 from pydantic import BaseModel, Field
 
 from .capabilities import (
+    ActionProvider,
     Capability,
     CodeLocator,
     CostProvider,
@@ -60,6 +61,7 @@ class PlatformInstance:
         costs: CostProvider | None = None,
         code: CodeLocator | None = None,
         events: EventSource | None = None,
+        actions: ActionProvider | None = None,
         error_rules: list[ErrorRule] | None = None,
         healthcheck: Callable[[], str] | None = None,
     ):
@@ -71,6 +73,7 @@ class PlatformInstance:
         self.costs = costs
         self.code = code
         self.events = events
+        self.actions = actions
         self.error_rules = error_rules or []
         self._healthcheck = healthcheck
 
@@ -87,6 +90,8 @@ class PlatformInstance:
             provided.add(Capability.CODE)
         if self.events is not None:
             provided.add(Capability.EVENTS)
+        if self.actions is not None:
+            provided.add(Capability.ACTIONS)
         return provided & self.manifest.capabilities
 
     def supports(self, cap: Capability) -> bool:
