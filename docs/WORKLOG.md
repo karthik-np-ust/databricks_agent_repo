@@ -2,6 +2,40 @@
 
 Newest first. Each entry: what was built, how it was verified, what's next.
 
+## 2026-10-27: Redesign R1, pipelines in their own repo
+**Decision:** rebuild the agent on LangGraph to match the "Agentic AIOps for DataOps v2" reference architecture (phases R0–R7 in [04](04-scope-and-status.md)). Pipelines live in a separate repo, as in a real customer environment. The read-only MCP server from the reference was left out on purpose: the observer already pushes the failure evidence.
+
+**Built:**
+- **New repo `C:\Users\285509\orders-pipelines`** (local, not pushed yet):
+  - **Pipeline notebooks:** `ingest_bronze`, `transform_silver`, `build_gold`, `sales_report` and `partner_feed` are now Databricks notebooks.
+    - Top-level PySpark cells, widgets instead of argparse, table names resolved inline.
+    - The DQ check raises `DQAssertionError` inline.
+    - No functions, no `common/` package, no `--src-dir` workaround.
+  - **5 test notebooks** that run in Databricks: isolated `test_<id>_*` schemas, seed fixtures, `dbutils.notebook.run`, then asserts. They port the old pytest assertions.
+  - **Setup notebooks** `00_setup_demo`, `10_seed_scenario` (all data scenarios) and `99_reset_demo`. Data seeding now happens inside Databricks, so the proxy upload block no longer matters.
+  - **Job specs:** `jobs/{dev,qa,prod}/*.json`, with notebook tasks on serverless from the Git folders `/Workspace/Shared/orders-pipelines-<env>`.
+  - **Faults** retargeted to the notebook text.
+  - **CI:** `notebook-lint`, `promotion-path` and `path-guard`, plus CODEOWNERS.
+  - **Working rules:** `CLAUDE.md` and `TASK_LOG.md`, from the user's rules.
+- **Agent repo, removed:** `sample_pipelines/` code, `scripts/deploy_sdk.py`, `setup_workspace.py`, `generate_data.py`, `reset_demo.py`, `deploy.yml`, `demo-ops.yml`, and the pipeline CI jobs.
+- **Agent repo, changed:**
+  - `inject_fault.py`:
+    - release faults edit a local clone (`--repo-path`);
+    - data faults run the seed notebook through `jobs.submit`;
+    - new `reset-git` command.
+  - Config points at `karthik-np-ust/orders-pipelines`, with `allowed_paths: [notebooks/, tests/]`, `protected_patterns: ["DQAssertionError"]` and `required_checks: [notebook-lint]`.
+  - Fix prompt `fix-v3`: notebook style, test notebooks run in Databricks.
+- New [15 · Databricks setup](15-databricks-setup.md).
+
+**Verified:**
+- Notebooks compile and pass pyflakes.
+- Every fault still applies, and `syntax_error` really breaks compilation.
+- 139 agent tests pass. The 9 `generate_data` tests were removed with that script.
+
+**Next:**
+- User: create the GitHub repo, Git folders and jobs, run `00_setup_demo`, then the test notebooks.
+- Me: R0 checks script, then R2 foundations.
+
 ## 2026-10-26: Self-repair worked; an untested path failed in dev; a manual merge reached prod
 **What happened**
 1. **Repair:** the agent repaired PR #4 from the CI log, CI went green, and it **merged into dev itself**.

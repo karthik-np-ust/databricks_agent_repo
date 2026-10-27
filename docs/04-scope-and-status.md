@@ -1,8 +1,38 @@
 # 04 · Scope and status
 
-Last updated: 2026-10-25.
+Last updated: 2026-10-27.
 
-## Phase status
+## 2026-10-27: LangGraph re-architecture (in progress)
+
+The agent is being rebuilt to mirror the "Agentic AIOps for DataOps v2" reference architecture:
+- a LangGraph multi-agent **control plane**: Monitoring, Triage, Recovery, a new **Testing** agent and Reconciliation, plus planner, policy with autonomy levels L0–L5, registry, Known Error DB and evidence store;
+- **signed ActionRequests** across a trust boundary;
+- a **data-plane worker** that alone holds the Databricks credentials (execution service, execution ledger, capability router).
+
+This reverses the earlier "no LangGraph" decision (Deviations table below). Since then, the scope has grown from one linear fix flow to several cooperating agents, human interrupts and replay-safe execution.
+
+**Pipelines moved to their own repo** (`karthik-np-ust/orders-pipelines`), as in a real customer environment:
+- They are Databricks notebooks written as plain top-level PySpark cells.
+- The user checks them out as one Git folder per environment and creates the jobs.
+- The agent never deploys pipelines.
+- Tests are Databricks test notebooks run inside Databricks; there is no local Spark.
+
+| Phase | Scope | Status |
+|---|---|---|
+| R0 Environment checks | Git folders, `jobs.submit` with `git_source`, `dbutils.notebook.run` on serverless, `repair_run`, SQL warehouse | ⏳ |
+| R1 Pipelines repo | `orders-pipelines`: 5 notebooks, 5 test notebooks, setup/seed/reset notebooks, job specs per env, faults, CI. Agent repo: `sample_pipelines/`, deploy and seeding scripts, and `deploy.yml`/`demo-ops.yml` removed; config points at the new repo | ✅ Built 2026-10-27 (local repo, lint clean). ⏳ User: push to GitHub, Git folders, jobs ([15](15-databricks-setup.md)) |
+| R2 Foundations | DB tables, Ed25519 signing, policy bundle + autonomy matrix, agent manifests, KEDB, evidence store, model gateway wrapper | ⏳ |
+| R3 Data plane | Executor, ledger, capability router, observer; Databricks adapter: repair, code.sync, tests.run, smoke_run, data.profile | ⏳ |
+| R4 Control plane, runtime path | Incident graph, Monitoring/Triage/Planner/Recovery/Reconciliation, approvals by interrupt | ⏳ |
+| R5 Code-fix path | Recovery fix + Testing agent, GitHub promotion, Git-folder sync, prod repair | ⏳ |
+| R6 Console | Approvals, ledger, KEDB, registry, evidence; old monitor/fix flow deleted | ⏳ |
+| R7 Packaging + docs | 4-service compose, docs rewrite | ⏳ |
+
+**Until R5:**
+- The old fix flow can open a PR in the pipelines repo but cannot deploy it, because there is no `deploy.yml` any more.
+- Docs 02, 03, 05, 08, 10 and 12 still describe `sample_pipelines/`. They are rewritten in R7.
+
+## Phase status (original build, before the redesign)
 
 | Phase | Scope | Status |
 |---|---|---|
@@ -73,5 +103,5 @@ JSON API calls work: monitoring, SQL, secrets, jobs, cancel/rerun. Binary upload
 | Separate `seed_data.py`, `break_env.py` | Folded into `inject_fault.py` / `_common.py` | One entry point per scenario |
 | Scenario 11: revoke a grant | Delete a secret (`Secret does not exist`) | On Free Edition the only user owns everything |
 | Scenario 12: injection in `notes` | Injection in the `qty` value | It then appears verbatim in the CAST error, so it really reaches the agent |
-| LangGraph for triage and the fix flow | Plain gateway + triage module; DB-backed state machine (`fix_attempts`) | The flow is linear with long external waits (CI, deploys, humans). A persisted state machine advanced per tick is simpler, resumable across restarts and fully unit-testable, with no extra framework. |
+| LangGraph for triage and the fix flow | Plain gateway + triage module; DB-backed state machine (`fix_attempts`) | The flow is linear with long external waits (CI, deploys, humans). A persisted state machine advanced per tick is simpler, resumable across restarts and fully unit-testable, with no extra framework. **Superseded 2026-10-27** by the LangGraph re-architecture (top of this page). |
 | Local `databricks bundle deploy` | `scripts/deploy_sdk.py` (same bundle files) | CLI download blocked by the corporate proxy; CI still uses bundles |

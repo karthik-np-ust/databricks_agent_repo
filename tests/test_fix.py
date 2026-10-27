@@ -404,7 +404,8 @@ def test_repo_fix_config_forbids_try_cast():
 
     from pipeline_agent.config import load_agent_config
 
-    cfg = load_agent_config(Path(__file__).parents[1] / "config").fix
+    # The repo's forbidden_patterns, with this module's fixture paths allowed.
+    cfg = load_agent_config(Path(__file__).parents[1] / "config").fix.model_copy(update={"allowed_paths": CFG.allowed_paths})
     bad = FIXED_SRC.replace('F.expr("try_cast(qty AS INT)")', 'F.col("qty").try_cast("int")')
     p = FixProposal.model_validate(proposal([{"path": SRC, "content": bad}, {"path": TEST, "content": FIXED_TEST}]))
     assert any("PySpark 4.0" in e for e in validate_proposal(p, CTX, cfg))

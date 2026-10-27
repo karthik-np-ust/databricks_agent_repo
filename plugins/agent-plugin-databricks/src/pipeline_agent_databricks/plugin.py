@@ -56,7 +56,7 @@ class DatabricksConfig(BaseModel):
     dbu_rate_usd: float = 0.0
     # Code location, used by the fix flow.
     repo: str | None = None
-    code_root: str = "sample_pipelines"
+    code_root: str = "notebooks"
     code_paths: dict[str, str] = Field(default_factory=dict, description="Job name -> path in the repo")
 
 

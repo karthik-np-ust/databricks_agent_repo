@@ -1,8 +1,0 @@
-# Scenario 10: a broken edit in a shared module breaks every task that imports it.
-name: syntax_error
-expected_error: SyntaxError
-commit_message: "style: type hints in dq helpers"
-edits:
-  - file: sample_pipelines/src/common/dq.py
-    find: "def assert_not_null(df: DataFrame, columns: list[str]) -> None:"
-    replace: "def assert_not_null(df: DataFrame, columns: list[str]) -> None"
