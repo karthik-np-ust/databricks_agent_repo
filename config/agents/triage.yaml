@@ -1,0 +1,12 @@
+name: triage
+version: 1.0.0
+description: Classifies a failure (KEDB first, LLM when no confident match), assesses impact and finds the owner.
+kind: llm
+phase: 1
+model_alias: triage
+capabilities: [pipeline.get_run]
+tools: [get_failure_evidence, kedb_search, read_repo_file]
+risk_class: low
+skills:
+  - id: diagnose
+    description: Structured diagnosis (class, root cause, confidence, failing component, suggested runbook).

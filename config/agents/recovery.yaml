@@ -1,0 +1,14 @@
+name: recovery
+version: 1.0.0
+description: Proposes and requests recovery - rerun, repair, cancel+rerun, or a code fix promoted dev -> qa -> prod.
+kind: llm
+phase: 1
+model_alias: fix
+capabilities: [pipeline.rerun, pipeline.repair, pipeline.cancel, pipeline.smoke_run, code.merge, code.sync]
+tools: [get_failure_evidence, kedb_search, read_repo_file]
+risk_class: high
+skills:
+  - id: runtime_recovery
+    description: Rerun / repair / cancel+rerun per the KEDB runbook.
+  - id: code_fix
+    description: Minimal notebook patch with guards, promoted through the environment branches.

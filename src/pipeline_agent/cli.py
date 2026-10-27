@@ -8,6 +8,7 @@ import logging
 import sys
 import time
 from datetime import datetime, time as dtime, timezone
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -211,6 +212,35 @@ def _cmd_console(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_keys(args: argparse.Namespace) -> int:
+    from .security.signing import PRIVATE_KEY_FILE, Signer
+
+    if (args.out / PRIVATE_KEY_FILE).exists() and not args.force:
+        print(f"{args.out / PRIVATE_KEY_FILE} exists; use --force to replace it (requests signed with the old key stop verifying)")
+        return 1
+    signer = Signer.generate()
+    private, public = signer.write(args.out)
+    print(f"key id {signer.key_id}\n  private (control plane only): {private}\n  public (data plane trust):    {public}")
+    return 0
+
+
+def _cmd_kedb(args: argparse.Namespace) -> int:
+    from .kedb import KnownErrorDB
+
+    kedb = KnownErrorDB(StateStore(Settings().database_url))
+    if args.action == "seed":
+        for pack, n in kedb.seed_all().items():
+            print(f"  {pack:<12} +{n}")
+        return 0
+    if args.action == "approve":
+        entry = kedb.approve(args.id, by=args.by)
+        print(f"approved #{entry.id} {entry.name}")
+        return 0
+    for e in kedb.list(status=args.status):
+        print(f"  #{e.id:<3} {e.status:<9} {e.platform:<11} {e.error_class:<9} {e.runbook:<10} {e.name}  ({e.provenance})")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="pipeline-agent", description="Pipeline production support agent")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -244,6 +274,17 @@ def main(argv: list[str] | None = None) -> int:
     p_audit = sub.add_parser("audit", help="show the audit log")
     p_audit.add_argument("--limit", type=int, default=50)
     p_audit.set_defaults(func=_cmd_audit)
+    p_keys = sub.add_parser("keys", help="generate the ActionRequest signing key pair")
+    p_keys.add_argument("action", choices=["generate"])
+    p_keys.add_argument("--out", type=Path, default=Path("var/keys"))
+    p_keys.add_argument("--force", action="store_true")
+    p_keys.set_defaults(func=_cmd_keys)
+    p_kedb = sub.add_parser("kedb", help="Known Error DB: seed from knowledge packs, list, approve proposals")
+    p_kedb.add_argument("action", choices=["seed", "list", "approve"])
+    p_kedb.add_argument("--status", choices=["proposed", "approved", "retired"])
+    p_kedb.add_argument("--id", type=int, help="entry to approve")
+    p_kedb.add_argument("--by", default="admin")
+    p_kedb.set_defaults(func=_cmd_kedb)
 
     args = parser.parse_args(argv)
     # .env feeds env:// secret references (e.g. DATABRICKS_TOKEN); real env vars win.

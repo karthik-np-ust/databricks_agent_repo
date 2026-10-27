@@ -26,3 +26,6 @@ frontend/dist/
 frontend/*.tsbuildinfo
 *.db-shm
 *.db-wal
+
+# redesign: signing keys and local evidence blobs
+var/

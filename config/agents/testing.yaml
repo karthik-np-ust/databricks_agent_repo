@@ -1,0 +1,14 @@
+name: testing
+version: 1.0.0
+description: Writes Databricks test notebooks for a fix and runs them in Databricks on the fix branch; gates every code fix.
+kind: llm
+phase: 1
+model_alias: test
+capabilities: [tests.run]
+tools: [get_failure_evidence, read_repo_file]
+risk_class: medium
+skills:
+  - id: write_tests
+    description: Test notebook that reproduces the failure in isolated test_<id>_* schemas and passes with the fix.
+  - id: run_tests
+    description: One-time serverless run from the fix branch; the result is evidence for the approval.

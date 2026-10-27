@@ -1,0 +1,12 @@
+# Plug-in agent manifest (A2A agent-card shaped). Loaded by control_plane/registry.py.
+name: monitoring
+version: 1.0.0
+description: Detects failed, slow and anomalous runs from data-plane events and opens work items.
+kind: deterministic          # deterministic | llm
+phase: 1
+capabilities: []             # requests no platform actions
+tools: [get_failure_evidence]
+risk_class: low
+skills:
+  - id: detect_failures
+    description: Turn run_failed / run_slow events into work items (deduplicated per run).
