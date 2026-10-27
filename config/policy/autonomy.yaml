@@ -1,0 +1,90 @@
+# Autonomy matrix: agent x capability x environment x failure pattern -> autonomy level.
+# First matching rule wins; a field that is left out matches anything. Lists match any value.
+#
+#   L0  manual investigation and action (kill switch)
+#   L1  automated evidence collection only (escalate)
+#   L2  agent recommends an action, a human acts
+#   L3  human approves, machine executes (console approval, or the GitHub merge for code)
+#   L4  pre-approved scenario runs autonomously (within caps)
+#   L5  closed loop, bounded read-only / proven cases only
+#
+# The control plane and the data plane load this same file. Every ActionRequest carries the
+# bundle's sha256; the data plane refuses a request decided under a different bundle.
+version: 1
+defaults:
+  level: 1
+
+rules:
+  # Read-only: always fine.
+  - name: read_only
+    capability: [pipeline.get_run, data.profile]
+    level: 5
+
+  # Infra / permission / unclassified failures: collect evidence, a human decides.
+  - name: infra_or_unknown_escalate
+    pattern: [infra, unknown]
+    level: 1
+
+  # Transient failures: rerun in prod within the caps; dev/qa only notify (as before the redesign).
+  - name: transient_rerun_prod
+    capability: pipeline.rerun
+    pattern: transient
+    env: prod
+    level: 4
+  - name: transient_rerun_non_prod
+    capability: pipeline.rerun
+    pattern: transient
+    env: [dev, qa]
+    level: 2
+
+  # Long-running runs: cancelling needs a human.
+  - name: cancel_needs_approval
+    capability: pipeline.cancel
+    level: 3
+    approval_from: [console]
+  - name: rerun_after_cancel
+    capability: pipeline.rerun
+    pattern: slow
+    level: 3
+    approval_from: [console]
+
+  # Code fixes: tests and dev/qa promotion run on their own; prod needs the human GitHub merge.
+  - name: tests_on_fix_branch
+    capability: tests.run
+    level: 4
+  - name: merge_dev_qa
+    capability: code.merge
+    env: [dev, qa]
+    level: 4
+  - name: merge_prod
+    capability: code.merge
+    env: prod
+    level: 3
+    approval_from: [github_merge]
+  - name: sync_dev_qa
+    capability: code.sync
+    env: [dev, qa]
+    level: 4
+  - name: sync_prod_after_merge
+    capability: code.sync
+    env: prod
+    level: 3
+    approval_from: [github_merge]
+  - name: smoke_run_non_prod
+    capability: pipeline.smoke_run
+    env: [dev, qa]
+    level: 4
+  - name: repair_dev_qa
+    capability: pipeline.repair
+    env: [dev, qa]
+    level: 4
+  - name: repair_prod_after_fix
+    capability: pipeline.repair
+    env: prod
+    level: 3
+    approval_from: [github_merge, console]
+
+# Hard limits applied on top of any level (from config/pipelines.yaml per pipeline when given).
+limits:
+  max_reruns_per_day: 2
+  max_actions_per_hour: 10

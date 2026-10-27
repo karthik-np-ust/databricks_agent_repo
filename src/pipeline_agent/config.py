@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     console_host: str = "127.0.0.1"
     console_port: int = 8080
     console_dist: Path | None = None  # built frontend; default ./frontend/dist
+    # Redesign: trust boundary and shared knowledge
+    signing_key_path: Path = Path("var/keys/signing_key.pem")  # control plane only
+    trusted_keys: list[Path] = Field(default_factory=lambda: [Path("var/keys/signing_key.pub.pem")])  # data plane
+    evidence_dir: Path = Path("var/evidence")
 
 
 class PlatformConfig(BaseModel):
@@ -109,6 +113,10 @@ class LlmConfig(BaseModel):
     # Tried in order; the next one is used when a model errors or is rate limited.
     triage_models: list[str] = Field(default_factory=list)
     fix_models: list[str] = Field(default_factory=list)
+    # Testing agent (writes Databricks test notebooks); empty = use fix_models.
+    test_models: list[str] = Field(default_factory=list)
+    # Extra model aliases for agents (alias -> models in fallback order).
+    aliases: dict[str, list[str]] = Field(default_factory=dict)
     max_tokens: int = 4000
     fix_max_tokens: int = 12000
     temperature: float = 0.1

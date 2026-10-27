@@ -2,6 +2,45 @@
 
 Newest first. Each entry: what was built, how it was verified, what's next.
 
+## 2026-10-27: Redesign R0 checks and R2 foundations
+**R0 (environment checks):** all 8 pass; results and decisions are in [04](04-scope-and-status.md).
+- The env folders are real Git folders (`repos.get` works even though `get_status` reports `DIRECTORY`).
+- A test notebook runs from a GitHub branch with `jobs.submit` + `git_source`, so the Testing agent needs no scratch folder.
+- `dbutils.notebook.run` works on serverless.
+- `repair_run`, the SQL warehouse and `system.lakeflow` are all available.
+
+**R2 (foundations).** These are building blocks only; nothing is wired into the running agent yet.
+- **Tables:** `events`, `work_items`, `action_requests`, `action_results`, `execution_ledger`, `approvals`, `known_errors`, `evidence`, `leases`.
+- **Trust boundary (`boundary/`):**
+  - capability catalogue: `pipeline.rerun|repair|cancel|smoke_run|get_run`, `code.merge|sync`, `tests.run`, `data.profile`;
+  - `ActionRequest`, which carries an idempotency key, expiry, policy-bundle hash, preconditions and an approval reference;
+  - Ed25519 sign/verify (`security/signing.py`, `pipeline-agent keys generate`);
+  - pull queue with idempotent submit and atomic claim.
+- **Autonomy policy (`autonomy/` + `config/policy/autonomy.yaml`):**
+  - first-match rules over agent × capability × env × failure pattern give L0–L5;
+  - OPA-shaped decision (allow, mode, needs_approval, approval_from, reasons, bundle sha256);
+  - the kill switch, dry run, rerun cap and circuit breaker are inputs;
+  - the agent registry denies any capability an agent's manifest doesn't list.
+  - Named `autonomy/` because `policy.py` (the old engine) keeps its name until R6.
+- **Agent registry:** `config/agents/{monitoring,triage,recovery,testing,reconciliation}.yaml`, with A2A-style cards.
+- **KEDB (`kedb.py`, `pipeline-agent kedb seed|list|approve`):**
+  - seeded from the core and plugin knowledge packs as approved entries;
+  - agent proposals stay `proposed` until an admin approves them;
+  - names are unique per platform (a smoke test found plugin rules being skipped when they shared a generic rule's name).
+- **Evidence store (`evidence.py`):** redacted, sha256 content-addressed blobs in `var/evidence/` plus metadata; an integrity check on read; `as_prompt` frames evidence as `<untrusted_evidence>`.
+- **Execution ledger (`data_plane/ledger.py`):** reserve → finish. A replay returns the recorded state, and a crashed execution is swept to `UNKNOWN` (never auto-retried).
+- **Leases (`leases.py`):** one holder until expiry. This fixes the "two agents at once" gap.
+- **Model gateway (`llm/model_gateway.py`):** agents ask for an alias (`triage`, `fix`, `test`), which maps to fallback lists in `llm.yaml`. Budgets and redaction stay in `LLMGateway`.
+- **Dependencies:** `langgraph`, `langgraph-checkpoint-sqlite`, `cryptography`; the `postgres` extra adds `langgraph-checkpoint-postgres`. `var/` is git-ignored.
+
+**Verified:**
+- 166 tests pass, 27 of them new: tampering per field, unknown key, expiry, idempotent submit, single claim, ledger replay and UNKNOWN, lease takeover, policy matrix cases, bundle hash, registry, KEDB curation, evidence redaction and integrity, model aliases.
+- CLI smoke test on a scratch DB: keys generated; KEDB seeded with generic +5, databricks +12, simulator +2.
+
+**Note:** `pip install -e .` could not finish while a `pipeline-agent.exe` process was running (file lock). Re-run it once that process is stopped.
+
+**Next:** R3 data plane: executor, capability router, observer, and the new Databricks adapter capabilities.
+
 ## 2026-10-27: Redesign R1, pipelines in their own repo
 **Decision:** rebuild the agent on LangGraph to match the "Agentic AIOps for DataOps v2" reference architecture (phases R0–R7 in [04](04-scope-and-status.md)). Pipelines live in a separate repo, as in a real customer environment. The read-only MCP server from the reference was left out on purpose: the observer already pushes the failure evidence.
 

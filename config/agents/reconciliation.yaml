@@ -1,0 +1,11 @@
+name: reconciliation
+version: 1.0.0
+description: Verifies outcomes after recovery - run state, row counts, null and duplicate keys on the written tables.
+kind: deterministic
+phase: 1
+capabilities: [pipeline.get_run, data.profile]
+tools: [get_failure_evidence]
+risk_class: low
+skills:
+  - id: verify_outcome
+    description: Compare post-recovery state and data profile with expectations; close or reopen the incident.
