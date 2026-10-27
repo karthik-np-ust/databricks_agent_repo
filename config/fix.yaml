@@ -1,19 +1,23 @@
 # Phase 3 fix flow: agent writes a fix, promotes it dev -> qa -> (human) main.
 # Off unless AGENT_FIX_ENABLED=true.
 fix:
-  repo: karthik-np-ust/databricks_agent_repo
+  # The pipelines live in their own repo (Databricks notebooks, checked out as Git folders per env).
+  repo: karthik-np-ust/orders-pipelines
   base_branch: main              # the code that failed in prod
   promotion: [dev, qa, main]     # PR targets in order; the last one is the human gate
   auto_merge: [dev, qa]          # agent merges these once CI is green (if branch rules allow)
-  deploy_workflow: deploy.yml    # GitHub Actions workflow whose run must succeed per branch
-  required_checks: [agent-tests, pipeline-tests, bundle-validate]
-  # The agent may only change these paths (CI path-guard enforces the same rule).
-  allowed_paths: [sample_pipelines/src/, sample_pipelines/tests/]
+  # Legacy: the old fix flow waits for this workflow per branch. The pipelines repo has no deploy
+  # workflow (Git folders are synced instead), so until the LangGraph rebuild's Phase 5 a fix
+  # stops after its dev merge and times out (max_wait_hours).
+  deploy_workflow: deploy.yml
+  required_checks: [notebook-lint]
+  # The agent may only change these paths (the pipelines repo's CI path-guard enforces the same rule).
+  allowed_paths: [notebooks/, tests/]
   # Read-only context for the model (never modified).
-  context_paths: [sample_pipelines/resources/jobs.yml, sample_pipelines/databricks.yml]
+  context_paths: [jobs/prod/orders_pipeline.json, jobs/prod/sales_report.json, jobs/prod/partner_feed_ingest.json]
   # Each changed file must keep at least as many occurrences of these as before
   # (stops "fixes" that delete data-quality checks).
-  protected_patterns: ["assert_not_null("]
+  protected_patterns: ["DQAssertionError"]
   # Known runtime breakers (platform knowledge), rejected before commit with a hint for the model.
   # Learned 2026-10-26: F.try_cast passed review but crashed the dev smoke run.
   forbidden_patterns:

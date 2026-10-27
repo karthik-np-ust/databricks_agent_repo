@@ -8,9 +8,9 @@ platforms:
     enabled: true
     config:
       state_file: .sim_state.json
-      repo: karthik-np-ust/databricks_agent_repo
+      repo: karthik-np-ust/orders-pipelines
       pipelines:
-        - { name: orders_pipeline,     behaviour: fail_code,      duration_seconds: 45, code_path: sample_pipelines/src }
+        - { name: orders_pipeline,     behaviour: fail_code,      duration_seconds: 45, code_path: notebooks }
         - { name: sales_report,        behaviour: slow,           slow_duration_seconds: 1800 }
         - { name: partner_feed_ingest, behaviour: fail_transient, fail_attempts: 1, duration_seconds: 20 }
         - { name: customer_export,     behaviour: fail_permission, duration_seconds: 20 }
@@ -26,8 +26,8 @@ platforms:
       use_billing_table: true   # Phase 0: system.billing.usage is readable on this workspace
       estimated_dbu_per_hour: 1.0
       dbu_rate_usd: 0.0         # Free Edition is free; set your contract rate on a paid workspace
-      repo: karthik-np-ust/databricks_agent_repo
-      code_root: sample_pipelines
+      repo: karthik-np-ust/orders-pipelines   # separate pipelines repo, Git folders per env
+      code_root: notebooks
     secrets:
       token: env://DATABRICKS_TOKEN
       host: env://DATABRICKS_HOST

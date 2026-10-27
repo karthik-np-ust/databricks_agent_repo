@@ -1,7 +1,7 @@
 """Phase 0 feasibility checks against the real Databricks workspace and OpenRouter.
 
 Read-only except --create-catalog, which runs CREATE CATALOG IF NOT EXISTS dev
-(the same thing setup_workspace.py does).
+(the same thing the pipelines repo's setup/00_setup_demo notebook does).
 
     python scripts/phase0_checks.py
     python scripts/phase0_checks.py --create-catalog

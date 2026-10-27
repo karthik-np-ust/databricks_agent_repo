@@ -1,9 +1,0 @@
-# Scenario 9: a debugging shortcut hard-codes the dev catalog and reaches prod.
-# Prod jobs then read/write dev tables (wrong data) or fail with TABLE_OR_VIEW_NOT_FOUND.
-name: hardcoded_catalog
-expected_error: TABLE_OR_VIEW_NOT_FOUND or wrong data
-commit_message: "chore: simplify table config"
-edits:
-  - file: sample_pipelines/src/common/config.py
-    find: "catalog=args.catalog"
-    replace: 'catalog="dev_scratch"'

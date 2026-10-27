@@ -3,18 +3,19 @@
 Auth uses the standard Databricks environment variables (DATABRICKS_HOST,
 DATABRICKS_TOKEN) or a ~/.databrickscfg profile. SQL needs DATABRICKS_WAREHOUSE_ID
 (Free Edition has one 2X-Small warehouse; copy its ID from SQL Warehouses).
+
+The pipelines themselves live in their own repo (orders-pipelines); data seeding runs
+there as notebooks, so nothing here uploads files (blocked by the corporate proxy).
 """
 
 from __future__ import annotations
 
-import io
 import os
 import sys
 import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT / "sample_pipelines" / "src"))
 
 try:  # .env holds local credentials (git-ignored); real env vars take precedence
     from dotenv import load_dotenv
@@ -30,14 +31,14 @@ try:  # trust the OS certificate store (corporate TLS inspection); see pipeline_
 except ImportError:
     pass
 
-from common.config import Tables  # noqa: E402  (shared with the pipelines, so names never drift)
-
 ENVS = ("dev", "qa", "prod")
 JOB_PREFIX = {"dev": "[dev] ", "qa": "[qa] ", "prod": ""}
+# Databricks Git folders of the pipelines repo, one per environment (see docs/15-databricks-setup.md).
+GIT_FOLDER_ROOT = "/Workspace/Shared/orders-pipelines"
 
 
-def tables(env: str, layout: str = "catalog") -> Tables:
-    return Tables(catalog=env if layout == "catalog" else "workspace", env=env, layout=layout)
+def git_folder(env: str, root: str = GIT_FOLDER_ROOT) -> str:
+    return f"{root}-{env}"
 
 
 def client():
@@ -73,7 +74,7 @@ def find_job(w, base_name: str, env: str):
     for job in w.jobs.list(name=full):
         if job.settings and job.settings.name == full:
             return job
-    sys.exit(f"Job {full!r} not found. Deploy the bundle first: databricks bundle deploy -t {env}")
+    sys.exit(f"Job {full!r} not found. Create it from the pipelines repo's jobs/{env}/{base_name}.json")
 
 
 def run_job(w, base_name: str, env: str, params: dict[str, str] | None = None) -> str:
@@ -84,17 +85,18 @@ def run_job(w, base_name: str, env: str, params: dict[str, str] | None = None) -
     return str(run_id)
 
 
-def replace_landing(w, env: str, csv_text: str, layout: str = "catalog", name: str = "orders.csv") -> None:
-    """Replace the landing folder's contents so each scenario is deterministic."""
-    landing = tables(env, layout).landing_path
-    try:
-        for entry in w.files.list_directory_contents(landing):
-            if not entry.is_directory:
-                w.files.delete(entry.path)
-    except Exception:
-        w.files.create_directory(landing)
-    w.files.upload(f"{landing}/{name}", io.BytesIO(csv_text.encode("utf-8")), overwrite=True)
-    print(f"  uploaded {name} to {landing}")
+def run_notebook(w, path: str, params: dict[str, str]) -> None:
+    """One-time serverless run of a workspace notebook; waits and fails loudly."""
+    from databricks.sdk.service.jobs import NotebookTask, SubmitTask
+
+    print(f"  running {path} {params}")
+    run = w.jobs.submit(
+        run_name=f"demo: {path.rsplit('/', 1)[-1]}",
+        tasks=[SubmitTask(task_key="notebook", notebook_task=NotebookTask(notebook_path=path, base_parameters=params))],
+    ).result()
+    state = run.state.result_state.value if run.state and run.state.result_state else "UNKNOWN"
+    if state != "SUCCESS":
+        sys.exit(f"  notebook run {run.run_id} ended {state}: {run.run_page_url}")
 
 
 def confirm(prompt: str, assume_yes: bool) -> None:

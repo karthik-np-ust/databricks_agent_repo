@@ -6,5 +6,4 @@
 # Changes to automation, agent config and the fault kit need a platform admin.
 /.github/                  @karthik-np-ust
 /config/                   @karthik-np-ust
-/sample_pipelines/faults/  @karthik-np-ust
 /scripts/                  @karthik-np-ust
