@@ -240,6 +240,49 @@ def _cmd_dataplane(args: argparse.Namespace) -> int:
         plane.stop()
 
 
+def _cmd_control(args: argparse.Namespace) -> int:
+    from .runtime import build_control_plane
+
+    settings = Settings()
+    plane = build_control_plane(settings)
+    print(f"Control plane {plane.holder}: agents {', '.join(plane.d.registry.names())}; signing key {plane.d.signer.key_id}; "
+          f"LLM {'on' if plane.d.triage else 'off'}")
+    try:
+        while True:
+            r = plane.tick()
+            if not r.leader:
+                print(f"{r.started_at:%H:%M:%S}Z  standby (another control plane holds the lease)")
+            else:
+                print(f"{r.started_at:%H:%M:%S}Z  new: {len(r.started)}  resumed: {len(r.resumed)}  waiting: {len(r.waiting)}  finished: {len(r.finished)}")
+                for wi, what in r.waiting:
+                    print(f"  wi-{wi:<5} waiting for {what}")
+                for wi, outcome in r.finished:
+                    print(f"  wi-{wi:<5} {outcome}")
+                for err in r.errors:
+                    print(f"  ERROR {err}")
+            if args.once:
+                return 1 if r.errors else 0
+            time.sleep(settings.poll_interval_seconds)
+    finally:
+        plane.stop()
+
+
+def _cmd_approvals(args: argparse.Namespace) -> int:
+    from .control_plane.approvals import Approvals
+
+    approvals = Approvals(StateStore(Settings().database_url))
+    if args.action in ("approve", "reject"):
+        if not args.id:
+            print("--id is required")
+            return 1
+        row = approvals.decide(args.id, args.action == "approve", by=f"user:{args.by} (cli)", comment=args.comment)
+        print(f"approval #{row.id} {row.status} by {row.decided_by}; the control plane resumes the incident on its next tick")
+        return 0
+    for row in approvals.list(status=None if args.all else "pending"):
+        print(f"  #{row.id:<4} {row.status:<9} incident {row.incident_id}  {row.capability:<18} {row.summary}")
+    return 0
+
+
 def _cmd_keys(args: argparse.Namespace) -> int:
     from .security.signing import PRIVATE_KEY_FILE, Signer
 
@@ -305,6 +348,16 @@ def main(argv: list[str] | None = None) -> int:
     p_dp = sub.add_parser("dataplane", help="run the data plane: observe platforms, execute signed ActionRequests")
     p_dp.add_argument("--once", action="store_true", help="one tick, then exit")
     p_dp.set_defaults(func=_cmd_dataplane)
+    p_cp = sub.add_parser("control", help="run the control plane: LangGraph incident graphs (no platform credentials)")
+    p_cp.add_argument("--once", action="store_true", help="one tick, then exit")
+    p_cp.set_defaults(func=_cmd_control)
+    p_ap = sub.add_parser("approvals", help="list, approve or reject pending L3 actions")
+    p_ap.add_argument("action", nargs="?", default="list", choices=["list", "approve", "reject"])
+    p_ap.add_argument("--id", type=int)
+    p_ap.add_argument("--by", default="operator")
+    p_ap.add_argument("--comment")
+    p_ap.add_argument("--all", action="store_true", help="list decided approvals too")
+    p_ap.set_defaults(func=_cmd_approvals)
     p_keys = sub.add_parser("keys", help="generate the ActionRequest signing key pair")
     p_keys.add_argument("action", choices=["generate"])
     p_keys.add_argument("--out", type=Path, default=Path("var/keys"))

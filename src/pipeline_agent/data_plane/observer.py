@@ -127,6 +127,7 @@ class Observer:
         return {
             "pipeline_id": run.pipeline_id, "pipeline_name": run.pipeline_name, "run_id": run.run_id, "env": run.env.value,
             "status": run.status.value, "url": run.url, "start_time": run.start_time.isoformat() if run.start_time else None,
+            "parameters": dict(run.parameters or {}),
         }
 
     # runs the executor started --------------------------------------------------

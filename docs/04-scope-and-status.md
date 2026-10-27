@@ -23,7 +23,7 @@ This reverses the earlier "no LangGraph" decision (Deviations table below). Sinc
 | R1 Pipelines repo | `orders-pipelines`: 5 notebooks, 5 test notebooks, setup/seed/reset notebooks, job specs per env, faults, CI. Agent repo: `sample_pipelines/`, deploy and seeding scripts, and `deploy.yml`/`demo-ops.yml` removed; config points at the new repo | ✅ Built 2026-10-27 (local repo, lint clean). ⏳ User: push to GitHub, Git folders, jobs ([15](15-databricks-setup.md)) |
 | R2 Foundations | DB tables, Ed25519 signing, policy bundle + autonomy matrix, agent manifests, KEDB, evidence store, model gateway wrapper | ✅ Built 2026-10-27 (27 new tests, 166 total). Not wired into the running agent yet (R3/R4) |
 | R3 Data plane | Executor, ledger, capability router, observer; Databricks adapter: repair, code.sync, tests.run, smoke_run, data.profile | ✅ Built 2026-10-27 (18 new tests, 184 total; live read-only tick + one signed `tests.run` against the workspace). `pipeline-agent dataplane` |
-| R4 Control plane, runtime path | Incident graph, Monitoring/Triage/Planner/Recovery/Reconciliation, approvals by interrupt | ⏳ |
+| R4 Control plane, runtime path | Incident graph, Monitoring/Triage/Planner/Recovery/Reconciliation, approvals by interrupt | ✅ Built 2026-10-27 (14 new tests, 198 total; verified with the two real CLI processes over the simulator). `pipeline-agent control`, `pipeline-agent approvals`. Runs next to the legacy `run` until R6 removes it |
 | R5 Code-fix path | Recovery fix + Testing agent, GitHub promotion, Git-folder sync, prod repair | ⏳ |
 | R6 Console | Approvals, ledger, KEDB, registry, evidence; old monitor/fix flow deleted | ⏳ |
 | R7 Packaging + docs | 4-service compose, docs rewrite | ⏳ |

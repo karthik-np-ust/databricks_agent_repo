@@ -98,6 +98,51 @@ def build_data_plane(settings: Settings | None = None):
     return DataPlane(observer, executor, Leases(store))
 
 
+def build_checkpointer(url: str):
+    """LangGraph checkpoints: SQLite file locally, Postgres (``postgresql://``) when hosted."""
+    if url.startswith("postgres"):
+        import psycopg
+        from langgraph.checkpoint.postgres import PostgresSaver
+        from psycopg.rows import dict_row
+
+        saver = PostgresSaver(psycopg.connect(url, autocommit=True, prepare_threshold=0, row_factory=dict_row))
+    else:
+        import sqlite3
+
+        from langgraph.checkpoint.sqlite import SqliteSaver
+
+        Path(url).parent.mkdir(parents=True, exist_ok=True)
+        saver = SqliteSaver(sqlite3.connect(url, check_same_thread=False))
+    saver.setup()
+    return saver
+
+
+def build_control_plane(settings: Settings | None = None):
+    """LangGraph orchestrator + agents. No platform instances, no platform credentials."""
+    from datetime import timedelta
+
+    from .control_plane.deps import ControlPlaneDeps
+    from .control_plane.registry import AgentRegistry
+    from .control_plane.runner import ControlPlane
+    from .evidence import EvidenceStore, LocalBlobs
+    from .security.signing import Signer
+
+    settings = settings or Settings()
+    config = load_agent_config(settings.config_dir)
+    store = StateStore(settings.database_url)
+    engine = build_policy_engine(settings)
+    triage = Triage(build_gateway(settings, config, store)) if settings.llm_enabled else None
+    deps = ControlPlaneDeps(
+        config=config, store=store, engine=engine, registry=AgentRegistry.load(settings.config_dir / "agents"),
+        signer=Signer.from_file(settings.signing_key_path), evidence=EvidenceStore(store, LocalBlobs(settings.evidence_dir)),
+        notifier=build_notifier(settings), triage=triage, controls=lambda: runtime_controls(settings, store),
+    )
+    return ControlPlane(
+        deps, build_checkpointer(settings.checkpoint_url),
+        approval_timeout=timedelta(hours=settings.approval_timeout_hours), action_timeout=timedelta(minutes=settings.action_timeout_minutes),
+    )
+
+
 def build_monitor(settings: Settings | None = None) -> Monitor:
     settings = settings or Settings()
     config = load_agent_config(settings.config_dir)
