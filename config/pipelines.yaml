@@ -17,6 +17,13 @@ policies:
     max_duration_seconds: 1200
     auto_fix: true             # fix flow (Phase 3) may open PRs
     owner: data-platform-team
+    # Reconciliation agent: read-only checks after a successful rerun/repair (catalog = env).
+    reconcile:
+      - table: "{env}.silver.orders"
+        keys: [order_id]
+        not_null: [order_id, store_id]
+      - table: "{env}.gold.daily_sales"
+        min_rows: 1
   - match: "partner_feed_ingest"
     max_duration_seconds: 600
 

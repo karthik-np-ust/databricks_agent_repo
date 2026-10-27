@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     signing_key_path: Path = Path("var/keys/signing_key.pem")  # control plane only
     trusted_keys: list[Path] = Field(default_factory=lambda: [Path("var/keys/signing_key.pub.pem")])  # data plane
     evidence_dir: Path = Path("var/evidence")
+    # Control plane: LangGraph checkpoints (SQLite file; a postgresql:// URL uses PostgresSaver).
+    checkpoint_url: str = "var/checkpoints.sqlite"
+    approval_timeout_hours: float = 24  # unanswered approval -> escalate
+    action_timeout_minutes: float = 120  # no result / run outcome by then -> escalate
 
 
 class PlatformConfig(BaseModel):
@@ -68,6 +72,15 @@ class PlatformConfig(BaseModel):
     enabled: bool = True
     config: dict[str, Any] = Field(default_factory=dict)
     secrets: dict[str, str] = Field(default_factory=dict)
+
+
+class ReconcileCheck(BaseModel):
+    """Read-only data check the Reconciliation agent runs after a successful recovery."""
+
+    table: str  # may use {env}, e.g. "{env}.silver.orders"
+    keys: list[str] = Field(default_factory=list)  # no duplicates allowed on these
+    not_null: list[str] = Field(default_factory=list)
+    min_rows: int = 1
 
 
 class PipelinePolicy(BaseModel):
@@ -87,6 +100,8 @@ class PipelinePolicy(BaseModel):
     act_in_envs: list[Env] = Field(default_factory=lambda: [Env.PROD])
     owner: str | None = None
     notify_channel: str | None = None
+    # Redesign: data checks after a successful rerun/repair (Reconciliation agent).
+    reconcile: list[ReconcileCheck] = Field(default_factory=list)
 
     def matches(self, platform_id: str, pipeline_name: str) -> bool:
         return fnmatch.fnmatchcase(f"{platform_id}:{pipeline_name}", self.match) or fnmatch.fnmatchcase(

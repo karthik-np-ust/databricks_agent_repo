@@ -2,6 +2,43 @@
 
 Newest first. Each entry: what was built, how it was verified, what's next.
 
+## 2026-10-27: Redesign R4, control plane (LangGraph)
+**Built** (`pipeline-agent control [--once]`; no platform instances and no platform credentials in this process):
+- **Orchestrator (`control_plane/orchestrator.py`):** one LangGraph thread per work item, checkpointed in SQLite (`var/checkpoints.sqlite`; a `postgresql://` URL uses PostgresSaver):
+  1. `intake`
+  2. `triage`
+  3. `plan`
+  4. `decide`
+  5. `request_approval` → `wait_approval`, when L3
+  6. `submit`
+  7. `wait_result`
+  8. `wait_run`
+  9. `advance`, which loops back to `decide` for the next step, then `reconcile`
+  10. `close`
+
+  Wait nodes only `interrupt()`. Side effects sit in their own nodes and are idempotent: incident per run, approval per (thread, capability), and request key `wi-<id>:<step>:<capability>`.
+- **Agents:**
+  - **Monitoring:** events → work items, deduplicated per run. Agent-started runs never open a second incident.
+  - **Triage:** KEDB first. The LLM is called only for unknown classes; a budget stop escalates.
+  - **Planner:** the KEDB runbook, else by class: rerun, repair, cancel+rerun, or code_fix (parked for R5). Reconciliation's checks are appended as steps.
+  - **Reconciliation:** run outcomes plus `data.profile` against `reconcile:` in `pipelines.yaml` (min rows, duplicate keys, nulls). A dry run never counts as resolved.
+- **Runner:**
+  - lease `control-plane`;
+  - starts threads and resumes them when an approval is decided, an action result arrives, or a `run_finished` event comes in;
+  - timeouts: approval 24h, action/run 2h, then escalate;
+  - retries a crashed thread from its checkpoint, up to 3 times.
+- **Approvals:** `pipeline-agent approvals list|approve|reject --id N` until the console in R6. One approval covers the whole plan for the kinds it is valid for. If a rule needs a different kind (prod code needs the GitHub merge), the graph escalates instead of asking again.
+- **Projections for the console:** `incidents` (open → resolved/escalated), `actions` (rerun/cancel/repair) and audit actions (`incident_opened`, `kedb_matched`, `diagnosed`, `planned`, `policy_decision`, `approval_requested`, `action_requested`, `reconciled`, `incident_resolved|escalated`).
+- **Behaviour change vs. the legacy monitor** (per the approved autonomy matrix): cancel+rerun of a long-running run now waits for one console approval. Transient reruns in prod are still automatic; dev/qa stay recommend-only.
+
+**Verified:**
+- 198 tests pass, 14 of them new: transient resolved; rerun fails again → escalated, no second incident; code → KEDB → awaiting fix; permission → escalated; dev → recommend; slow → one approval → cancel+rerun → resolved; reject; approval timeout; kill switch; dry run; reconciliation finds duplicates; restart resumes without resubmitting; secrets redacted; LLM only without a KEDB match plus budget stop; lease.
+- Two real processes (`dataplane --once` / `control --once`, 8 separate processes, scratch DB):
+  - a transient failure was resolved end to end, with the thread resumed from SQLite checkpoints across process restarts;
+  - a permission failure was escalated with no action.
+
+**Next:** R5 code-fix path: Recovery fix writer + Testing agent, GitHub promotion, `code.sync`, prod repair.
+
 ## 2026-10-27: Redesign R3, data plane
 **Built** (`pipeline-agent dataplane [--once]`; this process holds the platform credentials):
 - **Plugin SDK 1.1:** optional `ActionProvider` (`get_run`, `repair`, `sync_code`, `run_tests`, `profile`, `definition_hash`) and `Capability.ACTIONS`. Additive, so 1.0 plugins still load.
