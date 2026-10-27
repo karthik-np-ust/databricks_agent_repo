@@ -3,8 +3,13 @@
 Read-only except --create-catalog, which runs CREATE CATALOG IF NOT EXISTS dev
 (the same thing the pipelines repo's setup/00_setup_demo notebook does).
 
+--redesign runs only the checks for the LangGraph redesign (docs/04, phase R0): Git folders
+(Repos API), test notebook runs from a GitHub branch and from the dev Git folder (each creates
+and drops its own dev.test_* schemas), jobs.repair_run, SQL warehouse and system.lakeflow.
+
     python scripts/phase0_checks.py
     python scripts/phase0_checks.py --create-catalog
+    python scripts/phase0_checks.py --redesign
 """
 
 from __future__ import annotations
@@ -16,7 +21,7 @@ import shutil
 import subprocess
 import urllib.request
 
-from _common import client, sql
+from _common import GIT_FOLDERS, PIPELINES_REPO_URL, client, find_job, sql
 
 OPENROUTER = "https://openrouter.ai/api/v1"
 results: list[tuple[str, str, str]] = []
@@ -46,12 +51,89 @@ def openrouter(path: str, body: dict | None = None) -> dict:
         return json.loads(resp.read())
 
 
+def submit_test(w, name: str, task: dict, git_source: dict | None = None) -> None:
+    """One-time serverless run of a test notebook; PASS only if the notebook (and its asserts) succeed."""
+    from databricks.sdk.service.jobs import GitSource, SubmitTask
+
+    run = w.jobs.submit(
+        run_name=f"r0 check: {name}",
+        git_source=GitSource.from_dict(git_source) if git_source else None,
+        tasks=[SubmitTask.from_dict({"task_key": "test", **task})],
+    ).result()
+    state = run.state.result_state.value if run.state and run.state.result_state else "UNKNOWN"
+    message = (run.state.state_message or "") if run.state else ""
+    record(name, state == "SUCCESS", f"{state} {message[:200]} {run.run_page_url}")
+
+
+def redesign_checks(w) -> list:
+    def git_folders():
+        for env, path in GIT_FOLDERS.items():
+            status = w.workspace.get_status(path)
+            kind = status.object_type.value if status.object_type else "?"
+            try:
+                repo = w.repos.get(status.object_id)
+                record(f"git folder {env}", True, f"{path}: {kind}, repo id {repo.id}, branch {repo.branch}, head {(repo.head_commit_id or '')[:8]}")
+            except Exception as exc:
+                record(f"git folder {env}", False, f"{path}: {kind}, not a Git folder for the Repos API ({type(exc).__name__}); code.sync can't pull it")
+
+    def git_source_run():
+        submit_test(
+            w,
+            "test run from GitHub branch (git_source)",
+            {"notebook_task": {"notebook_path": "tests/test_transform_silver", "source": "GIT", "base_parameters": {"catalog": "dev"}}},
+            {"git_url": PIPELINES_REPO_URL, "git_provider": "gitHub", "git_branch": "dev"},
+        )
+
+    def workspace_run():
+        submit_test(
+            w,
+            "test run from dev Git folder (dbutils.notebook.run)",
+            {"notebook_task": {"notebook_path": f"{GIT_FOLDERS['dev']}/tests/test_transform_silver", "source": "WORKSPACE", "base_parameters": {"catalog": "dev"}}},
+        )
+
+    def repair():
+        job = find_job(w, "orders_pipeline", "dev")
+        runs = list(w.jobs.list_runs(job_id=job.job_id, completed_only=True, limit=1))
+        if not runs:
+            record("jobs.repair_run", None, "no completed [dev] orders_pipeline run to try it on")
+            return
+        try:
+            w.jobs.repair_run(run_id=runs[0].run_id, rerun_all_failed_tasks=True)
+            record("jobs.repair_run", True, f"accepted for run {runs[0].run_id}")
+        except Exception as exc:
+            text = str(exc)
+            reachable = any(k in text.lower() for k in ("repair", "succeeded", "success", "failed tasks", "state"))
+            record("jobs.repair_run", True if reachable else False, f"API reachable, refused for a successful run: {text.splitlines()[0][:200]}")
+
+    def warehouse():
+        sql(w, "SELECT 1")
+        record("sql warehouse", True, "statement execution works (data.profile)")
+
+    def lakeflow():
+        rows = sql(w, "SELECT COUNT(*), MAX(period_start_time) FROM system.lakeflow.job_run_timeline")
+        record("system.lakeflow.job_run_timeline", True, f"readable: rows={rows[0][0]}, latest {rows[0][1]}")
+
+    return [
+        ("git folders", git_folders), ("git_source test run", git_source_run), ("workspace test run", workspace_run),
+        ("jobs.repair_run", repair), ("sql warehouse", warehouse), ("system.lakeflow", lakeflow),
+    ]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--create-catalog", action="store_true")
+    parser.add_argument("--redesign", action="store_true", help="only the LangGraph redesign checks (R0)")
     parser.add_argument("--model", help="OpenRouter model for the tool-calling check (default: first free model with tools)")
     args = parser.parse_args()
     w = client()
+
+    if args.redesign:
+        for name, fn in redesign_checks(w):
+            try_check(name, fn)
+        print("\nSummary")
+        for name, status, detail in results:
+            print(f"  {status:<4} {name}")
+        return
 
     def auth():
         w.current_user.me()

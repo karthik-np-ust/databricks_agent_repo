@@ -19,7 +19,7 @@ This reverses the earlier "no LangGraph" decision (Deviations table below). Sinc
 
 | Phase | Scope | Status |
 |---|---|---|
-| R0 Environment checks | Git folders, `jobs.submit` with `git_source`, `dbutils.notebook.run` on serverless, `repair_run`, SQL warehouse | ⏳ |
+| R0 Environment checks | Git folders, `jobs.submit` with `git_source`, `dbutils.notebook.run` on serverless, `repair_run`, SQL warehouse | ✅ **All pass 2026-10-27** (`phase0_checks.py --redesign`, results below) |
 | R1 Pipelines repo | `orders-pipelines`: 5 notebooks, 5 test notebooks, setup/seed/reset notebooks, job specs per env, faults, CI. Agent repo: `sample_pipelines/`, deploy and seeding scripts, and `deploy.yml`/`demo-ops.yml` removed; config points at the new repo | ✅ Built 2026-10-27 (local repo, lint clean). ⏳ User: push to GitHub, Git folders, jobs ([15](15-databricks-setup.md)) |
 | R2 Foundations | DB tables, Ed25519 signing, policy bundle + autonomy matrix, agent manifests, KEDB, evidence store, model gateway wrapper | ⏳ |
 | R3 Data plane | Executor, ledger, capability router, observer; Databricks adapter: repair, code.sync, tests.run, smoke_run, data.profile | ⏳ |
@@ -27,6 +27,16 @@ This reverses the earlier "no LangGraph" decision (Deviations table below). Sinc
 | R5 Code-fix path | Recovery fix + Testing agent, GitHub promotion, Git-folder sync, prod repair | ⏳ |
 | R6 Console | Approvals, ledger, KEDB, registry, evidence; old monitor/fix flow deleted | ⏳ |
 | R7 Packaging + docs | 4-service compose, docs rewrite | ⏳ |
+
+### R0 results (2026-10-27, `python scripts/phase0_checks.py --redesign`)
+| Check | Result | Decision |
+|---|---|---|
+| Git folders via Repos API | ✅ all 3 (`dev`, `qa`, `main`, same head commit). `workspace.get_status` reports them as `DIRECTORY` and `repos.list` doesn't list them, but `repos.get(object_id)` works | `code.sync` = `repos.update(object_id, branch)`; look the folder up by path, then by object id |
+| Test notebook from a GitHub branch (`jobs.submit` + `git_source`) | ✅ `test_transform_silver` passed, including `dbutils.notebook.run` of a sibling notebook | `tests.run` runs the fix branch directly from GitHub; no scratch Git folder is needed |
+| Test notebook from the dev Git folder | ✅ passed | `dbutils.notebook.run` works on serverless |
+| `jobs.repair_run` | ✅ accepted. On a successful run it is a no-op (no task re-ran) | `pipeline.repair` re-runs only the failed tasks |
+| SQL warehouse | ✅ | `data.profile` uses statement execution |
+| `system.lakeflow.job_run_timeline` | ✅ readable | The observer can use it for history and baselines |
 
 **Until R5:**
 - The old fix flow can open a PR in the pipelines repo but cannot deploy it, because there is no `deploy.yml` any more.
