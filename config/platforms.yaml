@@ -28,6 +28,12 @@ platforms:
       dbu_rate_usd: 0.0         # Free Edition is free; set your contract rate on a paid workspace
       repo: karthik-np-ust/orders-pipelines   # separate pipelines repo, Git folders per env
       code_root: notebooks
+      # Data plane (redesign): tests run from branches of this repo; code.sync pulls these Git folders.
+      git_url: https://github.com/karthik-np-ust/orders-pipelines
+      git_folders:
+        dev: /Workspace/Shared/orders-pipelines-dev
+        qa: /Workspace/Shared/orders-pipelines_qa
+        prod: /Workspace/Shared/orders-pipelines_prod
     secrets:
       token: env://DATABRICKS_TOKEN
       host: env://DATABRICKS_HOST

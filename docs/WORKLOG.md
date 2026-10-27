@@ -2,6 +2,37 @@
 
 Newest first. Each entry: what was built, how it was verified, what's next.
 
+## 2026-10-27: Redesign R3, data plane
+**Built** (`pipeline-agent dataplane [--once]`; this process holds the platform credentials):
+- **Plugin SDK 1.1:** optional `ActionProvider` (`get_run`, `repair`, `sync_code`, `run_tests`, `profile`, `definition_hash`) and `Capability.ACTIONS`. Additive, so 1.0 plugins still load.
+- **Capability router:** maps stable capability ids to the platform adapter.
+  - Live-state preconditions: run active/terminal/failed, no newer success, definition unchanged, non-prod env, merged commit known.
+  - Post-conditions: the platform knows the new run; the Git folder head equals the merged commit.
+- **Executor:** claim → verify signature and expiry → policy bundle hash equals ours → policy re-evaluated locally (caps counted from the ledger) → preconditions → ledger reserve → execute → post-conditions → ledger finish → evidence → result.
+  - A replayed key returns the recorded outcome.
+  - A platform error gives `FAILED`; an unconfirmed effect gives `UNKNOWN`.
+  - Dry run checks everything and executes nothing.
+- **Observer:** polls each platform and emits `run_failed` once per run (redacted failure text in the evidence store, plus classifier hints) and `run_slow` (explicit threshold or p95 baseline).
+  - It watches runs the executor started and emits `run_finished` with the outcome.
+  - A repair that hasn't started yet isn't mistaken for its old failed state.
+- **Service:** observe → execute → sweep stale ledger entries to UNKNOWN, behind a `data-plane` lease, so one instance is active.
+- **Databricks adapter:**
+  - `repair_run` (failed tasks only);
+  - Git-folder sync (path → object id → `repos.update`, the R0 workaround);
+  - tests via `jobs.submit` + `git_source`, run in sequence with `run_if: ALL_DONE` (Free Edition allows 5 concurrent tasks);
+  - `data.profile` on the SQL warehouse with validated identifiers;
+  - job-definition hash.
+- **Simulator:** the same actions, deterministic (sync "deploys the fix", test outcome per branch, configurable profiles).
+- `config/platforms.yaml`: `git_url` and `git_folders` for `dbx-free`.
+
+**Verified:**
+- 184 tests pass, 18 of them new. Covered: observer dedupe and redaction; slow runs; a transient rerun watched to completion; the code-fix path (tests fail/pass, sync, prod repair); profile; replay; tampered, untrusted and drifted requests; policy re-check with approval and kill switch; live preconditions; dry run; platform error → FAILED; bad sync → UNKNOWN; lease; Databricks adapter calls.
+- **Live, read-only tick:** 13 runs seen, no events (nothing failed in 24h).
+- **Live signed `tests.run`:** queued → verified → L4 → run `228107115875655` submitted from `dev` → `run_finished: succeeded`.
+  - The first attempt failed after 5 minutes of SDK retries because the test script hadn't enabled the OS trust store (Zscaler). The ledger correctly recorded `FAILED`, and no run was created.
+
+**Next:** R4 control plane: LangGraph incident graph with Monitoring, Triage, Planner, Recovery (runtime path) and Reconciliation, plus console approvals via `interrupt()`.
+
 ## 2026-10-27: Redesign R0 checks and R2 foundations
 **R0 (environment checks):** all 8 pass; results and decisions are in [04](04-scope-and-status.md).
 - The env folders are real Git folders (`repos.get` works even though `get_status` reports `DIRECTORY`).
