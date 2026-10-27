@@ -34,11 +34,11 @@ except ImportError:
 ENVS = ("dev", "qa", "prod")
 JOB_PREFIX = {"dev": "[dev] ", "qa": "[qa] ", "prod": ""}
 # Databricks Git folders of the pipelines repo, one per environment (see docs/15-databricks-setup.md).
-GIT_FOLDER_ROOT = "/Workspace/Shared/orders-pipelines"
-
-
-def git_folder(env: str, root: str = GIT_FOLDER_ROOT) -> str:
-    return f"{root}-{env}"
+GIT_FOLDERS = {
+    "dev": "/Workspace/Shared/orders-pipelines-dev",
+    "qa": "/Workspace/Shared/orders-pipelines_qa",
+    "prod": "/Workspace/Shared/orders-pipelines_prod",
+}
 
 
 def client():

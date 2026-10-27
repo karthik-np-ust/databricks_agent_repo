@@ -21,7 +21,7 @@ from pathlib import Path
 
 import yaml
 
-from _common import GIT_FOLDER_ROOT, client, confirm, git_folder, run_job, run_notebook
+from _common import GIT_FOLDERS, client, confirm, run_job, run_notebook
 
 BASELINE_TAG = "demo-baseline"
 BRANCHES = ("dev", "qa", "main")
@@ -108,7 +108,6 @@ def main() -> None:
     parser.add_argument("--env", default="prod", choices=["dev", "qa", "prod"])
     parser.add_argument("--layout", default="catalog", choices=["catalog", "schema"])
     parser.add_argument("--repo-path", type=Path, help="local clone of the pipelines repo (release faults, reset-git)")
-    parser.add_argument("--git-folder-root", default=GIT_FOLDER_ROOT, help="Databricks Git folders are <root>-<env>")
     parser.add_argument("--push", action="store_true", help="release faults: push to origin/main")
     parser.add_argument("--no-run", action="store_true", help="data faults: seed only, don't start the job")
     parser.add_argument("--yes", action="store_true")
@@ -135,7 +134,7 @@ def main() -> None:
 
     w = client()
     if fault.kind == "data":
-        seed = f"{git_folder(args.env, args.git_folder_root)}/setup/10_seed_scenario"
+        seed = f"{GIT_FOLDERS[args.env]}/setup/10_seed_scenario"
         run_notebook(w, seed, {"env": args.env, "layout": args.layout, "scenario": args.scenario})
         if not args.no_run:
             run_job(w, "orders_pipeline", args.env)

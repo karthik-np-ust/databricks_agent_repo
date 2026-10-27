@@ -7,8 +7,8 @@ Databricks only through PRs and Git-folder pulls.
 ```
 GitHub: orders-pipelines            Databricks workspace
   dev  ───────────────────────────▶  /Workspace/Shared/orders-pipelines-dev   ◀── [dev] jobs
-  qa   ───────────────────────────▶  /Workspace/Shared/orders-pipelines-qa    ◀── [qa] jobs
-  main ───────────────────────────▶  /Workspace/Shared/orders-pipelines-prod  ◀── prod jobs
+  qa   ───────────────────────────▶  /Workspace/Shared/orders-pipelines_qa    ◀── [qa] jobs
+  main ───────────────────────────▶  /Workspace/Shared/orders-pipelines_prod  ◀── prod jobs
 ```
 
 ## Steps
@@ -28,7 +28,7 @@ GitHub: orders-pipelines            Databricks workspace
 3. **Link GitHub in Databricks:** User settings → Linked accounts → GitHub.
 4. **Git folders:** Workspace → Shared → Create → **Git folder** → repo URL.
    - Name it `orders-pipelines-dev` and switch it to branch `dev`.
-   - Repeat for `orders-pipelines-qa` (branch `qa`) and `orders-pipelines-prod` (branch `main`).
+   - Repeat for `orders-pipelines_qa` (branch `qa`) and `orders-pipelines_prod` (branch `main`).
 5. **Demo data:** open `orders-pipelines-dev/setup/00_setup_demo` and **Run all**.
    - It creates the catalogs `dev`, `qa` and `prod` with schemas `bronze`, `silver` and `gold`, the `bronze.landing` volume, the secret scopes `partner-<env>` and clean data.
    - If catalogs can't be created, use `layout = schema`. Then set `catalog = workspace` and `layout = schema` on the jobs.
