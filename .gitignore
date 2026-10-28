@@ -29,3 +29,8 @@ frontend/*.tsbuildinfo
 
 # redesign: signing keys and local evidence blobs
 var/
+
+# per-process env files for docker compose (see docker-compose.yml)
+.env.dataplane
+.env.control
+.env.console

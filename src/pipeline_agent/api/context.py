@@ -1,4 +1,6 @@
-"""Shared state for the console API: config, store, lazily built platform/GitHub clients, caches."""
+"""Shared state for the console API: config, store, GitHub client, caches.
+
+The console holds no platform credentials: platform state comes from the observer's snapshots."""
 
 from __future__ import annotations
 
@@ -10,7 +12,6 @@ from typing import Any, Callable
 
 from ..config import AgentConfig, Settings, load_agent_config
 from ..git.github import GitHubClient
-from ..sdk.plugin import PlatformInstance
 from ..store.db import StateStore
 from .auth import TokenSigner
 
@@ -46,26 +47,16 @@ def iso(dt: datetime | None) -> str | None:
 
 class ConsoleContext:
     def __init__(self, settings: Settings, config: AgentConfig | None = None, store: StateStore | None = None,
-                 instances: dict[str, PlatformInstance] | None = None, github: GitHubClient | None = None):
+                 github: GitHubClient | None = None):
         self.settings = settings
         self.config = config or load_agent_config(settings.config_dir)
         self.store = store or StateStore(settings.database_url)
         self.signer = TokenSigner(settings.console_secret.get_secret_value() if settings.console_secret else None)
         self.cache = TTLCache()
-        self._instances = instances
         self._github = github
         self._github_error: str | None = None
         self._triage = None
         self._lock = threading.Lock()
-
-    @property
-    def instances(self) -> dict[str, PlatformInstance]:
-        with self._lock:
-            if self._instances is None:
-                from ..runtime import build_instances
-
-                self._instances = build_instances(self.config)
-            return self._instances
 
     @property
     def github(self) -> GitHubClient | None:

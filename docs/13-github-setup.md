@@ -81,23 +81,23 @@ If the deploy workflow didn't start for the new branches: Actions → **deploy**
 - Require a pull request before merging, with 1 approval and **Require review from Code Owners**.
 - Require status checks: `agent-tests`, `pipeline-tests`, `bundle-validate`.
 - Block force pushes.
-- Leave "allow administrators to bypass" **on** for the demo. `reset_demo.py --git` and release-fault injection need it.
+- Leave "allow administrators to bypass" **on** for the demo. `inject_fault.py reset-git` and release-fault injection need it.
 
 > GitHub doesn't let you approve your own PR. In Phase 3 the agent opens PRs as its own bot account (`AGENT_BOT_LOGIN`) and you approve them. Until then, merge your own PRs with admin bypass.
 
 ## 10. Point the agent at the deployed jobs
 ```powershell
 .\.venv\Scripts\pipeline-agent check     # dbx-free: "N jobs visible" (9 = 3 jobs x 3 envs)
-.\.venv\Scripts\pipeline-agent run       # AGENT_DRY_RUN=true first; watch the decisions
+.\.venv\Scripts\pipeline-agent dataplane     # AGENT_DRY_RUN=true first; watch the decisions
+.\.venv\Scripts\pipeline-agent control       # second terminal
 ```
 
 ## 11. First fault
-Actions → **demo-ops** → action `inject`, scenario `bad_cast`, env `prod`. This uploads bad data and starts prod `orders_pipeline`. Then on the laptop:
+`python scripts/inject_fault.py bad_cast` runs the pipelines repo's `setup/10_seed_scenario` notebook in Databricks and starts prod `orders_pipeline`. With both planes running:
 ```powershell
-.\.venv\Scripts\pipeline-agent once
 .\.venv\Scripts\pipeline-agent incidents --show 1
 ```
-Reset afterwards with demo-ops action `reset`.
+Reset afterwards with the `setup/99_reset_demo` notebook. The pipelines repo now has its own GitHub setup (branches, protection, the agent's GitHub App): see [15](15-databricks-setup.md).
 
 ## 12. Agent identity for Phase 3
 The agent opens and merges PRs, so it needs its **own** GitHub identity:

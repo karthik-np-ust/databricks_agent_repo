@@ -2,6 +2,31 @@
 
 Newest first. Each entry: what was built, how it was verified, what's next.
 
+## 2026-10-28: Redesign R7, packaging and docs (redesign complete)
+**The console holds no platform credentials:**
+- The data-plane observer writes **platform snapshots** (new `platform_snapshots` table) every poll: pipelines, active runs, and platform capabilities and health. Costs refresh every 30 min, because billing queries are slow and cost money; the last good records are kept if one fails.
+- The console's pipelines, live runs, platforms, overview and cost views read the snapshots, with `last_poll` for freshness. `ConsoleContext` no longer builds platform instances at all.
+
+**Secrets split per process:**
+- `docker-compose.yml` gives each service its own env file (`.env.dataplane`, `.env.control`, `.env.console`, all git-ignored) and its own key mounts:
+  - the private signing key goes to `control` only;
+  - the public key goes to `dataplane` only;
+  - evidence is read-write for the data plane and read-only for the others;
+  - the GitHub App key goes to `control` and `console`.
+- `.env.example` marks every variable with the process that uses it.
+
+**Docs:**
+- **Rewritten:** 01 overview, 02 architecture (mermaid diagram, a reference-box → code table, the incident graph, the autonomy table, the code-fix path, data model, security properties), 03 folder structure, 10 runbook (two processes, fault catalog with the new behaviour, live demo order), 12 testing, and the README.
+- **Updated:** 05 (redesign limits), 07 (what's left: MCP, OPA, pgvector, Langfuse, LiteLLM, event bus, workload identity, OIDC, Snowflake, Teams approvals), 08 (settings per process, autonomy.yaml, agents, reconcile, Databricks Git fields, fix.yaml as it is now), 09 (`ActionProvider`), 11 (new controls), 13 and 14.
+
+**Verified:**
+- 187 tests pass (new: the console serves platform state from snapshots with no platform access). Lint is clean and `npm run build` is clean.
+- A live `dataplane --once` over the simulator wrote all four snapshot kinds.
+
+**Not verified (environment):**
+- `docker compose up` (no Docker here; validated as YAML only);
+- the code-fix path against the real repo, Databricks and OpenRouter.
+
 ## 2026-10-28: Redesign R6, console on the control plane; legacy agent removed
 **API: the console never changes a platform any more:**
 - **Cancel and rerun:**
