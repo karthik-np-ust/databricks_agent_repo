@@ -2,6 +2,23 @@
 
 Newest first. Each entry: what was built, how it was verified, what's next.
 
+## 2026-10-28: Full end-to-end test round on the real workspace, two bug fixes
+**Tested live** (Databricks Free Edition, pipelines repo, OpenRouter, both processes): 10 of 10 scenarios pass:
+- dry run, transient auto-rerun plus the rerun cap, long-running approve and reject;
+- missing-secret escalation, token redaction, prompt injection, kill switch;
+- console rerun and take-over, dev recommend-only;
+- the full code fix (incident 15: patch, Databricks tests, PRs dev → qa → main, prod sync and repair after the human merge, reconciliation, KEDB proposal).
+
+Steps, run ids and screenshots are in [Pipeline-Agent-Architecture-and-Production-Readiness.pdf](Pipeline-Agent-Architecture-and-Production-Readiness.pdf) (section 8).
+
+**Bugs found and fixed:**
+- **F1:** a prod repair re-runs tasks inside the original run, so its elapsed time counted from the original start. The observer then reported it as slow, and the agent asked for approval to cancel its own repair. Monitoring now skips slow events for runs under a `pipeline.repair` watch.
+- **F2:** a second work item on the same incident overwrote a `resolved` incident to `escalated`. Closing a work item no longer downgrades a resolved incident.
+
+Both have regression tests (189 total, lint clean).
+
+**Other findings** (documented, not changed): stale approvals for runs that already finished, redaction masking run ids in audit URLs, OpenRouter 429s handled by model fallback, lease standby after restart, and a slow rerun raising its own approval.
+
 ## 2026-10-28: Redesign R7, packaging and docs (redesign complete)
 **The console holds no platform credentials:**
 - The data-plane observer writes **platform snapshots** (new `platform_snapshots` table) every poll: pipelines, active runs, and platform capabilities and health. Costs refresh every 30 min, because billing queries are slow and cost money; the last good records are kept if one fails.

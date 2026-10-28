@@ -261,3 +261,38 @@ def test_only_one_control_plane_is_active(clock, store, tmp_path):
     demo = Demo(clock, store, tmp_path, [TRANSIENT])
     other = ControlPlane(demo.deps, InMemorySaver(), holder="other")
     assert demo.control.tick().leader and not other.tick().leader
+
+
+def test_a_repair_in_progress_is_never_reported_as_slow(clock, store, tmp_path):
+    # Found in the live test (2026-10-28): a repair keeps the original run id and start time, so the
+    # observer saw "running 1590s > 1200s" and the agent asked to cancel its own prod repair.
+    from pipeline_agent.control_plane.agents.monitoring import open_work_item
+    from pipeline_agent.store.db import EventRow
+
+    demo = Demo(clock, store, tmp_path, [TRANSIENT])
+    ev = demo.deps.events
+    payload = {"pipeline_id": "p", "pipeline_name": "orders_pipeline", "run_id": "7", "env": "prod", "elapsed_seconds": 1590, "threshold_seconds": 1200}
+    ev.emit("watch", "sim", "sim:p:7", {"capability": "pipeline.repair", "run_id": "7", "request_id": "r1"})
+    ev.emit("watch", "sim", "sim:p:8", {"capability": "pipeline.rerun", "run_id": "8", "request_id": "r2"})
+    repaired = ev.emit("run_slow", "sim", "sim:p:7", payload)
+    rerun = ev.emit("run_slow", "sim", "sim:p:8", {**payload, "run_id": "8"})
+    with store.session() as s:
+        repaired_event, rerun_event = s.get(EventRow, repaired), s.get(EventRow, rerun)
+    assert open_work_item(repaired_event, demo.deps) is None
+    assert open_work_item(rerun_event, demo.deps) is not None  # a new rerun that is slow is still a real problem
+
+
+def test_a_resolved_incident_is_not_downgraded_by_another_work_item(clock, store, tmp_path):
+    # Found in the live test (2026-10-28): a second work item on the same incident closed as
+    # "escalated" one tick after the incident resolved and overwrote its status.
+    demo = Demo(clock, store, tmp_path, [TRANSIENT])
+    demo.cycle(31)
+    demo.cycle(31)
+    inc = demo.incident("partner_feed_ingest")
+    assert inc.status == "resolved"
+    from pipeline_agent.control_plane.orchestrator import IncidentGraph
+
+    graph = IncidentGraph(demo.deps)
+    graph.close({"work_item_id": 999, "incident_id": inc.id, "outcome": "escalated", "outcome_reason": "late", "run_key": inc.run_key,
+                 "platform_id": "sim", "pipeline_name": inc.pipeline_name, "env": "prod", "run_id": "x", "url": None})
+    assert demo.incident("partner_feed_ingest").status == "resolved"

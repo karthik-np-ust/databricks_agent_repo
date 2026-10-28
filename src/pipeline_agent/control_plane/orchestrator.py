@@ -242,7 +242,11 @@ class IncidentGraph(CodeFixNodes):
         outcome, reason = s.get("outcome", "escalated"), s.get("outcome_reason", "")
         status = {"resolved": "resolved", "awaiting_code_fix": "open"}.get(outcome, "escalated")
         if s.get("incident_id"):
-            self.d.store.update_incident(s["incident_id"], now=self.d.clock(), status=status)
+            current = self.d.store.get_incident(s["incident_id"])
+            # Several work items can share an incident (e.g. a failure and a later slow report of the
+            # same run). Once resolved, another work item's close must not downgrade it.
+            if current is None or current.status != "resolved" or outcome == "resolved":
+                self.d.store.update_incident(s["incident_id"], now=self.d.clock(), status=status)
         self.fix_closed(s, outcome, reason)
         self._audit(s, {"resolved": "incident_resolved", "awaiting_code_fix": "awaiting_code_fix"}.get(outcome, "incident_escalated"), outcome=outcome, reason=reason)
         severity = Severity.INFO if outcome in ("resolved", "awaiting_code_fix") else Severity.CRITICAL

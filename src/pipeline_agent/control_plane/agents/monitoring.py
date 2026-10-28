@@ -7,6 +7,7 @@ started them sees the outcome through its ``run_finished`` event.
 
 from __future__ import annotations
 
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from ...store.db import EventRow, WorkItemRow
@@ -16,11 +17,21 @@ from ..state import IncidentState
 KINDS = {"run_failed": "failure", "run_slow": "slow", "manual_request": "manual", "fix_request": "fix"}
 
 
+def _repairing(run_key: str, deps: ControlPlaneDeps) -> bool:
+    with deps.store.session() as s:
+        watches = s.scalars(select(EventRow).where(EventRow.kind == "watch", EventRow.run_key == run_key)).all()
+    return any((w.payload or {}).get("capability") == "pipeline.repair" for w in watches)
+
+
 def open_work_item(event: EventRow, deps: ControlPlaneDeps) -> tuple[int, IncidentState] | None:
     """Create the work item for ``event``; None when there is nothing new to handle."""
     kind = KINDS[event.kind]
     if kind == "failure" and deps.events.exists("watch", event.run_key):
         return None  # agent-started run: its own incident handles the outcome
+    if kind == "slow" and _repairing(event.run_key, deps):
+        # A repair re-runs tasks inside the original run, so its elapsed time counts from the
+        # original start: never "slow". The repairing incident waits for its outcome (with a timeout).
+        return None
     p = event.payload
     if kind == "fix":  # a human asked for a code fix of an incident: continue from the incident's facts
         incident = deps.store.get_incident(p["incident_id"])

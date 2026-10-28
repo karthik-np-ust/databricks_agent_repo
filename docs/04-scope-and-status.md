@@ -38,9 +38,9 @@ This reverses the earlier "no LangGraph" decision (Deviations table below). Sinc
 | SQL warehouse | ✅ | `data.profile` uses statement execution |
 | `system.lakeflow.job_run_timeline` | ✅ readable | The observer can use it for history and baselines |
 
-**Not verified yet (needs your environment):**
-- the code-fix path against the real pipelines repo, OpenRouter and Databricks (`AGENT_LLM_ENABLED` + `AGENT_FIX_ENABLED`, both processes running);
-- `docker compose up` (no Docker on this laptop).
+**Verified live 2026-10-28:** 10 of 10 end-to-end scenarios on the real workspace, including the full code-fix path (incident 15) against the pipelines repo, OpenRouter and Databricks. Two bugs found and fixed (F1 repair reported as slow, F2 resolved incident downgraded). Details: [test report](Pipeline-Agent-Architecture-and-Production-Readiness.pdf), section 8.
+
+**Not verified yet:** `docker compose up` (no Docker on this laptop); release-fault scenarios (excluded from this round).
 
 Everything else is covered by tests and live checks ([12](12-testing.md)).
 
