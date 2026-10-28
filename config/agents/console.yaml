@@ -1,0 +1,13 @@
+# A human operator acting through the Ops Console (cancel / rerun / repair on request).
+# Registered like any agent so the same policy, signing and ledger apply to human actions.
+name: console
+version: 1.0.0
+description: Human-requested runtime actions from the Ops Console; the requester's console session is the approval.
+kind: deterministic
+phase: 1
+capabilities: [pipeline.cancel, pipeline.rerun, pipeline.repair]
+tools: []
+risk_class: medium
+skills:
+  - id: manual_action
+    description: Cancel, rerun or repair a run on an operator's request (reason recorded).

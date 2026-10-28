@@ -1,13 +1,13 @@
 import { Button, Card, Link, Table, TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text } from "@fluentui/react-components";
 import { Open16Regular } from "@fluentui/react-icons";
 import { useNavigate } from "react-router-dom";
-import { useApprovals, useFixes } from "../api/queries";
+import { useFixes } from "../api/queries";
 import type { Fix } from "../api/types";
 import { Empty, ErrorState, Loading, PageHeader } from "../components/common";
 import { ago } from "../components/format";
 import { FixStatus } from "../components/Status";
 
-function FixTable({ fixes, empty }: { fixes: Fix[]; empty: string }) {
+export function FixTable({ fixes, empty }: { fixes: Fix[]; empty: string }) {
   const nav = useNavigate();
   if (!fixes.length) return <Empty title={empty} />;
   return (
@@ -51,18 +51,3 @@ export function Fixes() {
   );
 }
 
-export function Approvals() {
-  const { data, error, isLoading } = useApprovals();
-  if (isLoading) return <Loading />;
-  if (error) return <ErrorState error={error} />;
-  return (
-    <>
-      <PageHeader
-        eyebrow="Human in the loop"
-        title="Waiting for your approval"
-        subtitle="Approvals happen in GitHub (it enforces reviews and records who approved). These are the PRs the agent can't merge itself."
-      />
-      <Card><FixTable fixes={data ?? []} empty="Nothing is waiting for you" /></Card>
-    </>
-  );
-}

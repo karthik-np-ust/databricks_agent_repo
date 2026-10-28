@@ -3,6 +3,7 @@ import {
   Switch, Table, TableBody, TableCell, TableRow, Text, tokens,
 } from "@fluentui/react-components";
 import { useOverview, useSetControls, useSettings } from "../api/queries";
+import { AgentsAndPolicy } from "./ControlPlane";
 import { useAuth } from "../auth/auth";
 import { Code, ErrorState, Loading, PageHeader, ReasonDialog } from "../components/common";
 import { dateTime } from "../components/format";
@@ -32,7 +33,7 @@ function Controls() {
     <ReasonDialog
       danger={danger}
       title={label}
-      description="Applied by the running agent on its next poll and recorded in the audit log."
+      description="Applied by both planes on their next poll and recorded in the audit log."
       confirmLabel="Apply"
       onConfirm={(reason) => set.mutateAsync({ [key]: value, reason })}
       trigger={(open) => <Button size="small" onClick={open} disabled={!can("admin")}>Change</Button>}
@@ -71,6 +72,7 @@ export function Settings() {
           <KeyValues data={{ github_identity: data.github_identity ?? "not configured", ...data.env_settings }} />
         </Card>
       </div>
+      <AgentsAndPolicy />
       <Card style={{ marginTop: 16 }}>
         <CardHeader header={<Text weight="semibold" size={400}>Platforms</Text>} description="config/platforms.yaml" />
         {data.platforms.map((p) => (

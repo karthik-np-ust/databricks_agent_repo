@@ -1,7 +1,8 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, post, put } from "./client";
 import type {
-  ActiveRun, AuditEntry, ComputeCosts, Fix, FixDiff, IncidentDetail, IncidentSummary, LlmCall, LlmCosts, Overview,
+  ActionApproval, ActiveRun, AgentCard, AuditEntry, ComputeCosts, EvidenceDoc, Fix, FixDiff, IncidentDetail, IncidentSummary,
+  KnownError, LedgerSummary, LlmCall, LlmCosts, Overview, PolicyView, SignedRequest,
   PipelineDetail, PipelineRow, RunRow, SettingsView,
 } from "./types";
 
@@ -46,3 +47,19 @@ export const useRetriage = () => useAction((b: { id: number }) => post(`/inciden
 export const useStartFix = () => useAction((b: { id: number; reason: string }) => post(`/incidents/${b.id}/fix`, { reason: b.reason }));
 export const useTakeover = () => useAction((b: { id: number; reason: string }) => post(`/incidents/${b.id}/takeover`, { reason: b.reason }));
 export const useSetControls = () => useAction((b: { enabled?: boolean; dry_run?: boolean; reason: string }) => put("/controls", b));
+
+// --- redesign: control plane, trust boundary, KEDB ---
+export const useActionApprovals = (status: "pending" | "all" = "pending") =>
+  useQuery({ queryKey: ["action-approvals", status], queryFn: () => api<ActionApproval[]>(`/action-approvals?status=${status}`), ...live });
+export const useDecideApproval = () =>
+  useAction((b: { id: number; approve: boolean; reason: string }) => post(`/action-approvals/${b.id}/${b.approve ? "approve" : "reject"}`, { reason: b.reason }));
+export const useRequests = () => useQuery({ queryKey: ["requests"], queryFn: () => api<SignedRequest[]>("/requests?limit=300"), ...live });
+export const useLedgerSummary = () => useQuery({ queryKey: ["ledger-summary"], queryFn: () => api<LedgerSummary>("/ledger/summary"), ...live });
+export const useKedb = (status?: string) =>
+  useQuery({ queryKey: ["kedb", status], queryFn: () => api<KnownError[]>(`/kedb${status ? `?status=${status}` : ""}`), ...slow });
+export const useCurateKedb = () =>
+  useAction((b: { id: number; action: "approve" | "retire"; reason: string }) => post(`/kedb/${b.id}/${b.action}`, { reason: b.reason }));
+export const useAgents = () => useQuery({ queryKey: ["agents"], queryFn: () => api<AgentCard[]>("/agents"), ...slow });
+export const usePolicy = () => useQuery({ queryKey: ["policy"], queryFn: () => api<PolicyView>("/policy"), ...slow });
+export const useEvidence = (id?: string) =>
+  useQuery({ queryKey: ["evidence", id], queryFn: () => api<EvidenceDoc>(`/evidence/${id}`), enabled: !!id, ...slow });

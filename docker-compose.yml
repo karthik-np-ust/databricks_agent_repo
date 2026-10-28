@@ -1,4 +1,6 @@
-# Stage 1 demo stack: agent + Ops Console + Postgres (one image, two commands).
+# Demo stack: data plane + control plane + Ops Console + Postgres (one image, three commands).
+# Shared ./var volume holds evidence blobs and the signing keys.
+# TODO R7: give the data plane only the public key and the Databricks token only to the data plane.
 services:
   db:
     image: postgres:16
@@ -13,13 +15,30 @@ services:
       interval: 5s
       retries: 10
 
-  agent:
+  dataplane:
     build: .
+    command: ["pipeline-agent", "dataplane"]
     env_file: .env
     environment:
       AGENT_DATABASE_URL: postgresql+psycopg://agent:agent@db:5432/agent
     volumes:
       - ./config:/app/config:ro
+      - agentvar:/app/var
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  control:
+    build: .
+    command: ["pipeline-agent", "control"]
+    env_file: .env
+    environment:
+      AGENT_DATABASE_URL: postgresql+psycopg://agent:agent@db:5432/agent
+      AGENT_CHECKPOINT_URL: postgresql://agent:agent@db:5432/agent
+    volumes:
+      - ./config:/app/config:ro
+      - agentvar:/app/var
     depends_on:
       db:
         condition: service_healthy
@@ -33,6 +52,7 @@ services:
       AGENT_DATABASE_URL: postgresql+psycopg://agent:agent@db:5432/agent
     volumes:
       - ./config:/app/config:ro
+      - agentvar:/app/var
     ports:
       - "127.0.0.1:8080:8080"   # localhost only
     depends_on:
@@ -42,3 +62,4 @@ services:
 
 volumes:
   pgdata:
+  agentvar:

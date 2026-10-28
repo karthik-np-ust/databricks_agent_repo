@@ -20,6 +20,13 @@ rules:
     capability: [pipeline.get_run, data.profile]
     level: 5
 
+  # A human asked for it in the console: L3, the requester's session is the console approval.
+  # Kill switch and rate limits still apply.
+  - name: human_operator
+    agent: console
+    level: 3
+    approval_from: [console]
+
   # Infra / permission / unclassified failures: collect evidence, a human decides.
   - name: infra_or_unknown_escalate
     pattern: [infra, unknown]

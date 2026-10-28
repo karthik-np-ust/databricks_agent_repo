@@ -92,8 +92,8 @@ def test_bundle_hash_changes_with_the_policy():
 # --- registry -------------------------------------------------------------------
 
 
-def test_registry_loads_the_five_agents_with_cards(registry):
-    assert registry.names() == ["monitoring", "reconciliation", "recovery", "testing", "triage"]
+def test_registry_loads_the_agents_with_cards(registry):
+    assert registry.names() == ["console", "monitoring", "reconciliation", "recovery", "testing", "triage"]
     assert registry.allows("testing", CapabilityId.TESTS_RUN)
     assert not registry.allows("testing", CapabilityId.CODE_MERGE)
     card = registry.card("triage")

@@ -69,6 +69,7 @@ class ControlPlane:
         if not self.leases.acquire(LEASE, self.holder, self.lease_ttl, now=now):
             report.leader = False
             return report
+        self.d.store.set_control("last_tick", now.isoformat(), actor="control-plane", now=now)  # console heartbeat
         for event in self.d.events.unconsumed(tuple(KINDS)):
             opened = open_work_item(event, self.d)
             self.d.events.consume([event.id], now=now)

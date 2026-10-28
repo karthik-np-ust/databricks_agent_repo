@@ -53,7 +53,7 @@ export function PipelineDetail() {
         actions={can("operator") ? (
           <ReasonDialog
             title={`Rerun ${p.name} (${p.env})?`}
-            description="Starts a new run now with the job's default parameters."
+            description="Queued as your request: policy is checked, the request is signed and the data plane starts a new run (job defaults) within a poll. Track it under Requests & ledger."
             confirmLabel="Rerun"
             onConfirm={(reason) => rerun.mutateAsync({ platform_id: p.platform_id, pipeline_id: p.pipeline_id, reason })}
             trigger={(open) => <Button icon={<ArrowRepeatAll20Regular />} onClick={open}>Rerun now</Button>}

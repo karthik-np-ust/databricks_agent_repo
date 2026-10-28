@@ -30,6 +30,11 @@ def evidence_text(state: IncidentState, deps: ControlPlaneDeps) -> str:
 def triage(state: IncidentState, deps: ControlPlaneDeps) -> dict[str, Any]:
     if state["kind"] == "slow":
         return {"error_class": "slow", "matched_rule": None, "kedb": None, "diagnosis": None}
+    if state["kind"] == "manual":
+        return {"error_class": "manual", "matched_rule": None, "kedb": None, "diagnosis": None}
+    if state["kind"] == "fix":  # triaged when the incident was opened
+        hints = state.get("hints") or {}
+        return {"error_class": hints.get("error_class") or "code", "matched_rule": hints.get("matched_rule"), "kedb": None, "diagnosis": None}
 
     hints = state.get("hints") or {}
     text = evidence_text(state, deps)
@@ -42,8 +47,8 @@ def triage(state: IncidentState, deps: ControlPlaneDeps) -> dict[str, Any]:
         "kedb": entry.model_dump() if entry else None,
         "diagnosis": None,
     }
-    if deps.triage is None or (entry is not None and error_class != "unknown"):
-        return update  # curated knowledge is enough; save the LLM budget
+    if deps.triage is None or (entry is not None and error_class in ("transient", "infra")):
+        return update  # curated knowledge is enough; save the LLM budget (code fixes need the root cause)
 
     try:
         diag = deps.triage.diagnose(

@@ -55,7 +55,7 @@ class ConsoleContext:
         self._instances = instances
         self._github = github
         self._github_error: str | None = None
-        self._monitor = None
+        self._triage = None
         self._lock = threading.Lock()
 
     @property
@@ -79,11 +79,50 @@ class ConsoleContext:
                     self._github_error = str(exc)
             return self._github
 
-    def monitor(self):
-        """A Monitor wired like the agent's, for on-demand triage from the console."""
-        with self._lock:
-            if self._monitor is None:
-                from ..runtime import build_monitor
+    # Control-plane pieces the console reads and writes. The console never calls a platform to
+    # change it: actions become events the control plane turns into signed requests.
+    @property
+    def events(self):
+        from ..boundary.events import EventLog
 
-                self._monitor = build_monitor(self.settings)
-            return self._monitor
+        return EventLog(self.store)
+
+    @property
+    def approvals(self):
+        from ..control_plane.approvals import Approvals
+
+        return Approvals(self.store)
+
+    @property
+    def kedb(self):
+        from ..kedb import KnownErrorDB
+
+        return KnownErrorDB(self.store)
+
+    @property
+    def evidence(self):
+        from ..evidence import EvidenceStore, LocalBlobs
+
+        return EvidenceStore(self.store, LocalBlobs(self.settings.evidence_dir))
+
+    @property
+    def registry(self):
+        from ..control_plane.registry import AgentRegistry
+
+        return AgentRegistry.load(self.settings.config_dir / "agents")
+
+    @property
+    def policy_bundle(self):
+        from ..autonomy import PolicyBundle
+
+        return PolicyBundle.load(self.settings.config_dir / "policy" / "autonomy.yaml")
+
+    def triage(self):
+        """LLM triage for 'Re-run diagnosis' (the console holds the LLM key, never a platform key)."""
+        with self._lock:
+            if self._triage is None:
+                from ..llm.triage import Triage
+                from ..runtime import build_gateway
+
+                self._triage = Triage(build_gateway(self.settings, self.config, self.store))
+            return self._triage

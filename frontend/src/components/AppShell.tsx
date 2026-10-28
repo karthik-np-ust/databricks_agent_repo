@@ -5,11 +5,11 @@ import {
 import {
   Board24Regular, DataBarVertical24Regular, DataFunnel24Regular, Alert24Regular, Wrench24Regular, CheckmarkStarburst24Regular,
   Money24Regular, BrainCircuit24Regular, History24Regular, Settings24Regular, WeatherMoon20Regular, WeatherSunny20Regular,
-  SignOut20Regular, Play24Regular,
+  SignOut20Regular, Play24Regular, ShieldKeyhole24Regular, BookDatabase24Regular,
 } from "@fluentui/react-icons";
 import type { ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { useApprovals, useOverview } from "../api/queries";
+import { useActionApprovals, useApprovals, useOverview } from "../api/queries";
 import { useAuth } from "../auth/auth";
 import { ago } from "./format";
 
@@ -37,6 +37,8 @@ const NAV = [
   { path: "/incidents", label: "Incidents", icon: <Alert24Regular /> },
   { path: "/fixes", label: "Agent fixes", icon: <Wrench24Regular /> },
   { path: "/approvals", label: "Approvals", icon: <CheckmarkStarburst24Regular /> },
+  { path: "/requests", label: "Requests & ledger", icon: <ShieldKeyhole24Regular /> },
+  { path: "/known-errors", label: "Known errors", icon: <BookDatabase24Regular /> },
   { path: "/costs", label: "Cost & FinOps", icon: <Money24Regular /> },
   { path: "/observability", label: "Agent observability", icon: <BrainCircuit24Regular /> },
   { path: "/audit", label: "Audit log", icon: <History24Regular /> },
@@ -65,6 +67,8 @@ export function AppShell({ children, dark, toggleDark }: { children: ReactNode; 
   const loc = useLocation();
   const { user, signOut } = useAuth();
   const approvals = useApprovals();
+  const actionApprovals = useActionApprovals();
+  const waiting = (approvals.data?.length ?? 0) + (actionApprovals.data?.length ?? 0);
   const current = NAV.slice().reverse().find((n) => (n.path === "/" ? loc.pathname === "/" : loc.pathname.startsWith(n.path)))?.path ?? "/";
   return (
     <div className={s.root}>
@@ -97,8 +101,8 @@ export function AppShell({ children, dark, toggleDark }: { children: ReactNode; 
             <Tab key={n.path} value={n.path} icon={n.icon}>
               <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
                 {n.label}
-                {n.path === "/approvals" && (approvals.data?.length ?? 0) > 0 && (
-                  <CounterBadge count={approvals.data!.length} color="danger" size="small" />
+                {n.path === "/approvals" && waiting > 0 && (
+                  <CounterBadge count={waiting} color="danger" size="small" />
                 )}
               </span>
             </Tab>

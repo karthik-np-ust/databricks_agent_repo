@@ -33,7 +33,7 @@ export interface Overview {
   kpis: {
     pipelines: number; pipelines_by_env: Record<Env, number>; runs_24h: number; runs_24h_failed: number; runs_24h_succeeded: number;
     running_now: number; incidents_open: number; incidents_escalated: number; incidents_resolved: number; incidents_total: number;
-    auto_resolved_pct: number | null; mttr_s: number | null; fixes_active: number; awaiting_human: number;
+    auto_resolved_pct: number | null; mttr_s: number | null; fixes_active: number; awaiting_human: number; approvals_pending: number;
     llm_calls_today: number; llm_tokens_today: number; llm_cost_today: number; llm_requests_budget: number; llm_cost_budget: number;
   };
   attention: Fix[];
@@ -70,7 +70,7 @@ export interface LlmCall {
   cost_usd: number; latency_ms: number; redactions?: number; success: boolean; error: string | null;
 }
 
-export interface IncidentDetail { incident: IncidentSummary; error_text: string; diagnosis: Diagnosis | null; fix: Fix | null; audit: AuditEntry[]; llm_calls: LlmCall[] }
+export interface IncidentDetail extends IncidentAgentView { incident: IncidentSummary; error_text: string; diagnosis: Diagnosis | null; fix: Fix | null; audit: AuditEntry[]; llm_calls: LlmCall[] }
 
 export interface FixDiff {
   available: boolean; reason?: string; pr_number?: number; pr_url?: string;
@@ -100,4 +100,50 @@ export interface SettingsView {
   plugins: { name: string; version: string; display_name: string; capabilities: string[]; config_schema: Record<string, unknown> }[];
   defaults: Record<string, unknown>; policies: Record<string, unknown>[]; circuit_breaker: Record<string, unknown>;
   budgets: Record<string, unknown>; llm: Record<string, unknown>; fix: Record<string, unknown>; github_identity: string | null;
+}
+
+// --- redesign: control plane, trust boundary, KEDB (src/pipeline_agent/api/control.py) ---
+
+export interface ActionApproval {
+  id: number; created_at: string; incident_id: number | null; capability: string; summary: string; steps: string[];
+  reasons: string[]; level: number | null; status: "pending" | "approved" | "rejected"; decided_by: string | null;
+  decided_at: string | null; comment: string | null;
+}
+
+export interface SignedRequest {
+  id: string; created_at: string; incident_id: number | null; agent: string; capability: string; platform_id: string; env: string;
+  level: number; status: string; key_id: string; idempotency_key: string; target: Record<string, unknown>;
+  params: Record<string, unknown>; approval: { kind: string; ref: string; by?: string | null } | null; reason: string | null;
+  policy_bundle: string;
+  result: { status: string; error: string | null; output: Record<string, unknown>; evidence_ids: string[]; ts: string } | null;
+  ledger: { state: "RESERVED" | "SUCCESS" | "FAILED" | "UNKNOWN"; reserved_at: string; finished_at: string | null } | null;
+}
+
+export interface LedgerSummary { total: number; RESERVED: number; SUCCESS: number; FAILED: number; UNKNOWN: number }
+
+export interface KnownError {
+  id: number; name: string; signature: string; platform: string; error_class: string; runbook: string; diagnostics: string;
+  fix_hint: string; risk: string; rollback: string; provenance: string; status: "proposed" | "approved" | "retired";
+}
+
+export interface AgentCard {
+  name: string; description: string; version: string; skills: { id: string; description: string }[];
+  "x-pipeline-agent": { kind: string; model_alias: string | null; requests: string[]; tools: string[]; risk_class: string };
+}
+
+export interface PolicyView {
+  sha256: string; version: number; defaults: Record<string, unknown>; limits: Record<string, number>;
+  rules: { name: string; level: number; agent: unknown; capability: unknown; env: unknown; pattern: unknown; rule: unknown; approval_from: string[] }[];
+}
+
+export interface EvidenceDoc {
+  id: string; kind: string; source: string; media_type: string; size: number; redactions: number; created_at: string; intact: boolean; text: string;
+}
+
+export interface IncidentAgentView {
+  evidence: { id: string; kind: string; source: string; size: number; redactions: number; created_at: string }[];
+  requests: SignedRequest[];
+  tests: SignedRequest[];
+  work_items: { id: number; kind: string; status: string; waiting_for: string | null; outcome: string | null; reason: string | null }[];
+  approvals: ActionApproval[];
 }

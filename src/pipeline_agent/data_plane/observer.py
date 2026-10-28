@@ -39,7 +39,7 @@ class ObserveReport:
     errors: list[str] = field(default_factory=list)
 
 
-def _p95(values: list[float]) -> float:
+def p95(values: list[float]) -> float:
     ordered = sorted(values)
     return ordered[max(0, math.ceil(0.95 * len(ordered)) - 1)]
 
@@ -114,7 +114,7 @@ class Observer:
         if threshold is None:
             samples = self.store.successful_durations(run.platform_id, run.pipeline_id)
             if len(samples) >= policy.baseline_min_samples:
-                threshold = _p95(samples) * policy.baseline_multiplier
+                threshold = p95(samples) * policy.baseline_multiplier
         elapsed = run.elapsed(now)
         if threshold is None or elapsed is None or elapsed.total_seconds() <= threshold:
             return

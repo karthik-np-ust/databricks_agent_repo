@@ -4,7 +4,7 @@ import pytest
 
 from pipeline_agent.config import AgentConfig, PipelinePolicy, load_agent_config
 from pipeline_agent.notify.webhook import Notification, slack_payload, teams_payload
-from pipeline_agent.policy import p95
+from pipeline_agent.data_plane.observer import p95
 from pipeline_agent.sdk import ErrorClass, ErrorClassifier
 from pipeline_agent.sdk.registry import PluginError, check_api_version, discover_plugins, load_plugin
 from pipeline_agent.secrets import EnvSecretResolver, SecretError

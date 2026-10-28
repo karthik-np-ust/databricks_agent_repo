@@ -19,6 +19,15 @@ def plan(state: IncidentState, deps: ControlPlaneDeps) -> dict[str, Any]:
     if diag.get("budget_stop"):
         return _plan("escalate", "LLM budget reached: a human takes over", [])
 
+    if state["kind"] == "manual":
+        m = state["manual"]
+        step = Step(capability=m["capability"], agent="console", target=m["target"], params=m.get("params") or {},
+                    watch=m["capability"] in (CapabilityId.RERUN.value, CapabilityId.REPAIR.value))
+        update = _plan("manual", f"{m['capability']} requested by {m['requested_by']}: {m['reason']}", [step])
+        update["approval"] = {"kind": "console", "ref": f"user:{m['requested_by']}", "by": m["requested_by"]}
+        return update
+    if state["kind"] == "fix":
+        return _plan("code_fix", f"code fix requested by {(state.get('hints') or {}).get('requested_by')}", [])
     if state["kind"] == "slow":
         runbook = "cancel_rerun"
     else:

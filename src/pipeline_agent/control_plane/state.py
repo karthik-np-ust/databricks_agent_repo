@@ -30,6 +30,7 @@ class IncidentState(TypedDict, total=False):
     evidence_ids: list[str]
     hints: dict[str, Any]  # observer's classifier hints (error_class, matched_rule, failed tasks)
     incident_id: int
+    manual: dict[str, Any]  # console request: capability, target, params, requested_by, reason
     # triage
     error_class: str  # transient | code | infra | unknown | slow
     matched_rule: str | None

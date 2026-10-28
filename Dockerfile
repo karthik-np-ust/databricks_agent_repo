@@ -26,4 +26,4 @@ RUN useradd --create-home --uid 10001 agent
 USER agent
 
 EXPOSE 8080
-CMD ["pipeline-agent", "run"]
+CMD ["pipeline-agent", "control"]

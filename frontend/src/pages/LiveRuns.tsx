@@ -47,7 +47,7 @@ export function LiveRuns() {
                         <ReasonDialog
                           danger
                           title={`Cancel ${r.pipeline_name} run ${r.run_id}?`}
-                          description="The run is cancelled on the platform. The agent will not rerun it automatically."
+                          description="Queued as your request: policy is checked, the request is signed and the data plane cancels the run within a poll. The agent will not rerun it automatically. Track it under Requests & ledger."
                           confirmLabel="Cancel run"
                           onConfirm={(reason) => cancel.mutateAsync({ platform_id: r.platform_id, pipeline_id: r.pipeline_id, run_id: r.run_id, reason })}
                           trigger={(open) => <Button size="small" icon={<Stop20Regular />} onClick={open}>Cancel</Button>}

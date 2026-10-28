@@ -2,6 +2,57 @@
 
 Newest first. Each entry: what was built, how it was verified, what's next.
 
+## 2026-10-28: Redesign R6, console on the control plane; legacy agent removed
+**API: the console never changes a platform any more:**
+- **Cancel and rerun:**
+  - become `manual_request` events, which the control plane runs as one-step graphs;
+  - a new `console` agent manifest plus the `human_operator` autonomy rule make them L3, with the requester's session as the approval;
+  - they still go through policy (kill switch, caps), signing and the ledger, and the API returns `{queued: true}`.
+- **Start fix:** a `fix_request` event runs the R5 code-fix path for a parked incident (approver role).
+- **Takeover:** stops the incident's graph (work item `taken_over`), rejects its pending approvals and fails an active fix.
+- **Re-run diagnosis:** calls the new triage directly. The console holds the LLM key, never a platform key.
+- **New endpoints:**
+  - `/action-approvals` plus approve/reject (approver role), which resume the paused graph;
+  - `/requests` (signed requests with result, ledger state, approval, level and bundle);
+  - `/ledger/summary`;
+  - `/kedb` plus approve/retire (admin role);
+  - `/agents` (A2A cards), `/policy` (rules and bundle hash) and `/evidence/{id}` (redacted, integrity-checked).
+- **Existing endpoints:**
+  - incident detail now includes evidence, signed requests, Databricks test runs, the graph's work-item state and approvals;
+  - the overview gains `approvals_pending`;
+  - the control-plane runner writes the `last_tick` heartbeat.
+
+**Agent behaviour:**
+- Triage now asks the LLM for **code** failures even when the KEDB matched, because the fix writer needs the root cause. Transient and infra matches still skip it.
+- The prompt-injection flag is audited and shown in the diagnosis notification, as in the legacy monitor.
+
+**UI:**
+- **Approvals:** runtime actions with approve/reject, plus PRs awaiting your GitHub merge.
+- **Requests & ledger** and **Known errors** pages (approve proposals, retire entries).
+- **Settings:** agent registry and autonomy rules.
+- **Incident page:** an "Agents on this incident" panel (Databricks tests, signed requests, evidence viewer, approvals).
+- The nav badge counts both kinds of approval, and the action dialogs explain that actions are queued.
+
+**Removed:** `monitor.py`, `fix/flow.py`, the legacy `policy.py`, `runtime.build_monitor` and `pipeline-agent once`. `pipeline-agent run` now only explains the two processes.
+
+**Kept and changed:**
+- `pipeline-agent triage` and `fix` now use the new triage and a `fix_request`.
+- **Compose:** the `dataplane` and `control` services, plus the console; checkpoints live in Postgres. The `Dockerfile` default is `control`.
+
+**Tests:**
+- `test_monitor.py` was deleted (its scenarios live in `test_control_plane.py`), as were the fix-flow state-machine tests (replaced by `test_code_fix.py`).
+- The four LLM-integration tests were ported to the graph, and the console API tests were rewritten over both planes.
+- 186 pass. The frontend builds with `tsc` and `vite`.
+
+**Live smoke:**
+- `pipeline-agent console` over the scratch simulator setup: every new endpoint returns 200 and the built UI is served.
+- An admin's rerun was queued, run by `control --once` as an L3 request (`approval: console by karthik`), executed by `dataplane --once`, and recorded as `SUCCESS` in the ledger.
+
+**Next:** R7 packaging and docs:
+- split secrets per process;
+- console reads from observer snapshots;
+- rewrite the architecture docs.
+
 ## 2026-10-28: Redesign R5, code-fix path and Testing agent
 **Built** (in the incident graph, `control_plane/codefix.py`):
 - **Recovery fix writer.** It reuses `FixWriter` and all its guards: allowed paths, compile, pyflakes, `DQAssertionError` kept, `forbidden_patterns`, secrets. It changes only pipeline code and commits to `fix/incident-<id>`.
