@@ -29,6 +29,7 @@ from ..store.db import WorkItemRow
 from .agents.planner import plan as plan_steps
 from .agents.reconciliation import profile_violations, verdict
 from .agents.triage import evidence_text, triage as triage_agent
+from .codefix import CodeFixNodes
 from .deps import ControlPlaneDeps
 from .state import IncidentState
 
@@ -40,7 +41,7 @@ def thread_id(work_item_id: int) -> str:
     return f"wi-{work_item_id}"
 
 
-class IncidentGraph:
+class IncidentGraph(CodeFixNodes):
     def __init__(self, deps: ControlPlaneDeps):
         self.d = deps
 
@@ -113,9 +114,15 @@ class IncidentGraph:
         update = plan_steps(s, self.d)
         self._audit(s, "planned", runbook=update["runbook"], reason=update["plan_reason"], steps=[st["capability"] for st in update["steps"]])
         if not update["steps"]:
+            if update["runbook"] == "code_fix" and self._can_fix(s):
+                return update  # Recovery writes the fix, the Testing agent proves it
             outcome = "awaiting_code_fix" if update["runbook"] == "code_fix" else "escalated"
             update.update(outcome=outcome, outcome_reason=update["plan_reason"])
         return update
+
+    def _can_fix(self, s: IncidentState) -> bool:
+        incident = self.d.store.get_incident(s["incident_id"])
+        return self.d.code_fix_enabled and bool(incident and incident.fix_eligible)
 
     def decide(self, s: IncidentState) -> dict[str, Any]:
         step = s["steps"][s["step"]]
@@ -124,7 +131,7 @@ class IncidentGraph:
         prefix = f"{s['platform_id']}:{s['pipeline_id']}:"
         decision = self.d.engine.evaluate(
             PolicyInput(
-                agent=step["agent"], capability=CapabilityId(step["capability"]), env=s["env"], pattern=s["error_class"],
+                agent=step["agent"], capability=CapabilityId(step["capability"]), env=step.get("env", s["env"]), pattern=s["error_class"],
                 rule=s.get("matched_rule"), approval=Approval(**s["approval"]) if s.get("approval") else None,
                 enabled=bool(controls.get("enabled", True)), dry_run=bool(controls.get("dry_run", False)),
                 reruns_today=self.d.ledger.count_since(now - timedelta(hours=24), (CapabilityId.RERUN.value, CapabilityId.REPAIR.value), prefix),
@@ -169,8 +176,8 @@ class IncidentGraph:
         approval = s.get("approval") if decision["level"] == 3 else None
         request = ActionRequest.new(
             ttl=self.d.request_ttl, issued_at=self.d.clock(),
-            idempotency_key=f"{thread_id(s['work_item_id'])}:{s['step']}:{step['capability']}",
-            capability=step["capability"], platform_id=s["platform_id"], env=s["env"], target=step["target"],
+            idempotency_key=f"{thread_id(s['work_item_id'])}:{len(s.get('results', []))}:{step['capability']}",
+            capability=step["capability"], platform_id=s["platform_id"], env=step.get("env", s["env"]), target=step["target"],
             params={**step.get("params", {}), "max_reruns_per_day": self._rerun_cap(s)}, agent=step["agent"],
             incident_id=s.get("incident_id"), level=decision["level"], policy_bundle=decision["bundle"], pattern=s["error_class"],
             rule=s.get("matched_rule"), approval=Approval(**approval) if approval else Approval(kind="policy", ref=decision["rule"]),
@@ -201,7 +208,15 @@ class IncidentGraph:
         results = list(s["results"])
         results[-1] = {**results[-1], "run": {"run_id": finished.get("run_id"), "status": finished.get("status"), "url": finished.get("url")}}
         update: dict[str, Any] = {"results": results}
-        if finished.get("status") != "succeeded":
+        fix = s.get("fix") or {}
+        if (
+            finished.get("status") != "succeeded" and results[-1]["capability"] == CapabilityId.TESTS_RUN.value
+            and fix and fix["repairs"] < self.d.config.fix.repair_attempts
+        ):
+            failure = "\n".join(self.d.evidence.get_text(e) for e in finished.get("evidence_ids") or []) or f"test run {finished.get('run_id')} failed"
+            update["fix"] = {**fix, "phase": "repair", "failure": failure, "failure_source": "Databricks test run"}
+            self._audit(s, "tests_failed", run=finished.get("url"), repairs_left=self.d.config.fix.repair_attempts - fix["repairs"])
+        elif finished.get("status") != "succeeded":
             update.update(outcome="escalated", outcome_reason=f"{results[-1]['capability']} run {finished.get('run_id')} ended {finished.get('status')}")
         return update
 
@@ -218,6 +233,7 @@ class IncidentGraph:
         status = {"resolved": "resolved", "awaiting_code_fix": "open"}.get(outcome, "escalated")
         if s.get("incident_id"):
             self.d.store.update_incident(s["incident_id"], now=self.d.clock(), status=status)
+        self.fix_closed(s, outcome, reason)
         self._audit(s, {"resolved": "incident_resolved", "awaiting_code_fix": "awaiting_code_fix"}.get(outcome, "incident_escalated"), outcome=outcome, reason=reason)
         severity = Severity.INFO if outcome in ("resolved", "awaiting_code_fix") else Severity.CRITICAL
         titles = {"resolved": "Resolved", "awaiting_code_fix": "Needs a code fix", "recommended": "Recommended action (a human acts)"}
@@ -234,7 +250,9 @@ class IncidentGraph:
     # routing --------------------------------------------------------------------
     @staticmethod
     def _after_plan(s: IncidentState) -> str:
-        return "decide" if s.get("steps") else "close"
+        if s.get("steps"):
+            return "decide"
+        return "fix_write" if s["runbook"] == "code_fix" and not s.get("outcome") else "close"
 
     @staticmethod
     def _after_decide(s: IncidentState) -> str:
@@ -256,28 +274,69 @@ class IncidentGraph:
 
     @staticmethod
     def _after_run(s: IncidentState) -> str:
-        return "close" if s.get("outcome") else "advance"
+        if s.get("outcome"):
+            return "close"
+        return "fix_repair" if (s.get("fix") or {}).get("phase") == "repair" else "advance"
 
     @staticmethod
     def _after_advance(s: IncidentState) -> str:
-        return "decide" if s["step"] < len(s["steps"]) else "reconcile"
+        if s["step"] < len(s["steps"]):
+            return "decide"
+        fix = s.get("fix")
+        return "fix_next" if fix and fix["phase"] != "done" else "reconcile"
+
+    @staticmethod
+    def _closed_or(nxt: str):
+        return lambda s: "close" if s.get("outcome") else nxt
+
+    @staticmethod
+    def _after_fix_next(s: IncidentState) -> str:
+        if s["fix"]["phase"] == "pr":
+            return "fix_open_pr"
+        return "decide" if s.get("steps") else "reconcile"
+
+    def _after_open_pr(self, s: IncidentState) -> str:
+        return "fix_wait_merge" if s["fix"]["stage"] == len(self.d.config.fix.promotion) - 1 else "fix_wait_checks"
+
+    @staticmethod
+    def _after_checks(s: IncidentState) -> str:
+        if s.get("outcome"):
+            return "close"
+        return {"repair": "fix_repair", "merge": "fix_merge"}[s["fix"]["phase"]]
+
+    @staticmethod
+    def _after_merge(s: IncidentState) -> str:
+        if s.get("outcome"):
+            return "close"
+        return "fix_wait_merge" if s["fix"]["phase"] == "human_merge" else "fix_deploy"
 
     def build(self) -> StateGraph:
         g = StateGraph(IncidentState)
         for name in ("intake", "triage", "plan", "decide", "request_approval", "wait_approval", "submit", "wait_result", "wait_run",
-                     "advance", "reconcile", "close"):
+                     "advance", "reconcile", "close", "fix_write", "fix_tests", "fix_repair", "fix_next", "fix_open_pr",
+                     "fix_wait_checks", "fix_merge", "fix_wait_merge", "fix_deploy"):
             g.add_node(name, getattr(self, name))
         g.add_edge(START, "intake")
         g.add_edge("intake", "triage")
         g.add_edge("triage", "plan")
-        g.add_conditional_edges("plan", self._after_plan, ["decide", "close"])
+        g.add_conditional_edges("plan", self._after_plan, ["decide", "fix_write", "close"])
         g.add_conditional_edges("decide", self._after_decide, ["submit", "request_approval", "close"])
         g.add_edge("request_approval", "wait_approval")
         g.add_conditional_edges("wait_approval", self._after_approval, ["decide", "close"])
         g.add_edge("submit", "wait_result")
         g.add_conditional_edges("wait_result", self._after_result, ["wait_run", "advance", "close"])
-        g.add_conditional_edges("wait_run", self._after_run, ["advance", "close"])
-        g.add_conditional_edges("advance", self._after_advance, ["decide", "reconcile"])
+        g.add_conditional_edges("wait_run", self._after_run, ["advance", "fix_repair", "close"])
+        g.add_conditional_edges("advance", self._after_advance, ["decide", "fix_next", "reconcile"])
+        # code-fix path
+        g.add_conditional_edges("fix_write", self._closed_or("fix_tests"), ["fix_tests", "close"])
+        g.add_conditional_edges("fix_tests", self._closed_or("decide"), ["decide", "close"])
+        g.add_conditional_edges("fix_repair", self._closed_or("decide"), ["decide", "close"])
+        g.add_conditional_edges("fix_next", self._after_fix_next, ["fix_open_pr", "decide", "reconcile"])
+        g.add_conditional_edges("fix_open_pr", self._after_open_pr, ["fix_wait_checks", "fix_wait_merge"])
+        g.add_conditional_edges("fix_wait_checks", self._after_checks, ["fix_repair", "fix_merge", "close"])
+        g.add_conditional_edges("fix_merge", self._after_merge, ["fix_wait_merge", "fix_deploy", "close"])
+        g.add_conditional_edges("fix_wait_merge", self._closed_or("fix_deploy"), ["fix_deploy", "close"])
+        g.add_edge("fix_deploy", "decide")
         g.add_edge("reconcile", "close")
         g.add_edge("close", END)
         return g

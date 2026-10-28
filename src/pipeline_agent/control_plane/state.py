@@ -11,6 +11,7 @@ class Step(TypedDict, total=False):
     target: dict[str, Any]
     params: dict[str, Any]
     watch: bool  # wait for the run to finish (rerun / repair / smoke / tests)
+    env: str  # environment the step acts in, when not the incident's (e.g. code.merge to qa)
     expect: dict[str, Any]  # reconciliation expectations for data.profile steps
 
 
@@ -44,6 +45,8 @@ class IncidentState(TypedDict, total=False):
     approval_id: int | None
     request_id: str | None
     results: list[dict[str, Any]]  # one per finished step: {capability, status, output, error, run}
+    # code-fix path: branch, head, stage (index into fix.promotion), phase, pr, prs, repairs, files
+    fix: dict[str, Any]
     # outcome
     outcome: str  # resolved | escalated | recommended | awaiting_code_fix
     outcome_reason: str
