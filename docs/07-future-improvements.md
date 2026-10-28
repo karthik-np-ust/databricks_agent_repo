@@ -1,13 +1,18 @@
 # 07 · Future improvements
 
-## Next phases (from the approved plan)
-| Phase | Deliverable |
-|---|---|
-| 2 | LLM gateway (OpenRouter now, approved provider later): token and cost meter per call, per-incident and per-day budgets, root-cause summary in incidents and notifications |
-| 3 | Fix flow: LangGraph state machine (triage → diagnose → patch → dev → qa → human approval → prod → verify), sandboxed repo/log tools, GitHub client, `git blame` evidence |
-| 4 | FastAPI (REST + SSE) and Ops Console MVP (Command Center, Pipelines, Live Runs, Incident detail with diff viewer, Cost & FinOps) |
-| 5 | Hardening: prompt-injection tests, leader lock, verified Docker image, structured logging |
-| 6 | Snowflake plugin + OpenLineage receiver, proving a second platform with zero core changes |
+## After the redesign (R0–R7 built)
+| Item | Why | Notes |
+|---|---|---|
+| **Read-only diagnostic MCP servers** | The reference's box 8: Triage could ask follow-up questions (schemas, last good parameters) through a standard protocol | Deliberately not built: the observer pushes the evidence, and each tool call costs an LLM request. The tool gateway is an internal interface, so an MCP client can be added |
+| OPA instead of the in-process evaluator | Policy as a CNCF-graduated service, shared with other systems | The decision is already OPA-shaped (input → `{allow, level, …}`); port `autonomy.yaml` to Rego |
+| pgvector runbook search, graph store | Similar-incident retrieval, dependency reasoning | KEDB is regex and priority today |
+| Langfuse / Phoenix, OpenTelemetry | Agent-quality and trace views | `llm_calls`, the audit log and the ledger cover the demo |
+| LiteLLM-class model gateway | Central keys, routing, caching | `ModelGateway` aliases make it a config change |
+| Event bus (Service Bus / Kafka) | Push instead of polling the `events` table | `EventLog` is the seam |
+| Workload identity, Key Vault (`kv://`) | No long-lived tokens | `env://` today; the identity broker is pilot work |
+| Entra ID OIDC for the console | Real authentication | Demo login today |
+| Snowflake adapter (phase 2 of the reference) | Second platform on the same capability contract | `RunSource` + `RunController` + `LogProvider` + `ActionProvider` (`EXECUTE TASK … RETRY LAST` for repair) |
+| Teams approval cards | Approve L3 actions where people already are | Approvals API exists; add an adaptive-card action |
 
 ## Hosting roadmap
 | Stage | Hosting | Changes |

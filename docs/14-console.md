@@ -1,22 +1,28 @@
-# 14 · Pipeline Ops Console (Phase 4)
+# 14 · Pipeline Ops Console
 
-A web console to watch and steer the agent. It's one React app served by a small API inside the agent package, and it reads the same database the agent writes.
+A web console to watch and steer the agent. It's one React app served by a small API inside the agent package. It is part of the **control plane**:
+- it reads the shared database;
+- it **never calls a platform**: platform state comes from the data plane's snapshots;
+- it **never executes** anything: actions become events, which the control plane turns into signed, policy-checked requests.
 
 ```
-browser ──► pipeline-agent console (FastAPI, :8080)
-               ├─ /api/v1/*      read views + role-checked actions
+browser ──► pipeline-agent console (FastAPI, :8080)        no platform credentials, no signing keys
+               ├─ /api/v1/*      read views + role-checked actions (queue only) + approvals
                ├─ /              built React app (frontend/dist)
-               ├─ agent DB       runs, incidents, fixes, audit, LLM ledger, controls
-               ├─ platforms      live: pipelines, active runs, billing (cached 15s–5min)
+               ├─ shared DB      incidents, work items, approvals, signed requests, ledger, KEDB, audit, LLM ledger,
+               │                 platform snapshots (pipelines, active runs, health, costs) written by the observer
+               ├─ evidence       redacted blobs (read-only)
                └─ GitHub (App)   PR diffs and comments for agent fixes
-pipeline-agent run (the agent) ──► same DB; reads runtime controls every tick
+pipeline-agent control   ──► turns console events into graph threads; resumes them on approvals
+pipeline-agent dataplane ──► executes signed requests; refreshes the snapshots every poll (costs every 30 min)
 ```
 
 ## Run it
 ```powershell
 cd frontend; npm install; npm run build; cd ..      # once (npm install is slow behind the proxy)
 .\.venv\Scripts\pipeline-agent console               # http://127.0.0.1:8080   API docs: /api/docs
-.\.venv\Scripts\pipeline-agent run                    # in another terminal: the agent itself
+.\.venv\Scripts\pipeline-agent dataplane              # other terminals: the two planes
+.\.venv\Scripts\pipeline-agent control
 ```
 For UI development, use `npm run dev` (http://localhost:5173, hot reload; it proxies `/api` to :8080).
 
@@ -25,16 +31,18 @@ For UI development, use `npm run dev` (http://localhost:5173, hot reload; it pro
 |---|---|---|
 | **Command Center** | Agent status (active / dry run / stopped / not polling), KPIs, "approval needed" banners, 14-day runs chart, platforms, recent incidents, activity feed | – |
 | **Pipelines** | Every pipeline across platforms and envs: last run, 14-day success rate, average duration, threshold, whether the agent acts or only notifies, auto-fix, open incidents | – |
-| Pipeline detail | Run-duration chart with threshold line, policy, incidents | Rerun now (operator) |
-| **Live runs** | Active runs, elapsed vs threshold (warning at 80%, red over threshold) | Cancel (operator) |
+| Pipeline detail | Run-duration chart with threshold line, policy, incidents | Rerun (operator): queued as an L3 request, executed by the data plane |
+| **Live runs** | Active runs, elapsed vs threshold (warning at 80%, red over threshold) | Cancel (operator): queued as an L3 request |
 | **Incidents** | All incidents with class, LLM summary, fix state, tokens | – |
-| **Incident detail** | **Lifecycle tracker** (Detected → Diagnosed → Fix written → dev → qa → approved → prod → verified), redacted error, LLM diagnosis with confidence, **agent fix** (PR links, code diff from GitHub, PR comments incl. repair attempts, step history), LLM calls, audit trail | Re-run diagnosis (operator), Start agent fix (approver), Take over (operator) |
+| **Incident detail** | **Lifecycle tracker**, redacted error, LLM diagnosis, **Agents on this incident** (graph state and what it waits for; Databricks test runs; signed requests with level, approval, result and ledger state; evidence viewer; approvals), **agent fix** (PR links, diff, PR comments, history), LLM calls, audit trail | Re-run diagnosis (operator), Start fix (approver, code failures), Take over (operator: stops the graph, rejects its approvals) |
 | **Agent fixes** | Every fix and where it is in the promotion | – |
-| **Approvals** | PRs waiting for a human, with "Review in GitHub" | Approval itself happens in GitHub |
+| **Approvals** | L3 runtime actions waiting for an approver (plan, steps, autonomy level, reasons; history), and fix PRs waiting for your merge in GitHub | Approve / Reject with reason (approver). Prod code is approved by merging in GitHub |
+| **Requests & ledger** | Every signed ActionRequest: agent, capability, env, autonomy level, approval, result, ledger state (RESERVED / SUCCESS / FAILED / UNKNOWN), idempotency key | – |
+| **Known errors** | KEDB entries: approved, proposed by agents, retired; signature, runbook, fix hint, provenance | Approve proposals / retire entries (admin) |
 | **Cost & FinOps** | Compute per env per day (billing table or estimate), top pipelines, LLM tokens per day, spend per incident, budget meters; 7/14/30-day filter | – |
 | **Agent observability** | LLM calls: model, tokens, latency, redactions, errors; per-model stats | – |
 | **Audit log** | Filter by actor, action, target; CSV export | – |
-| **Settings & controls** | Kill switch and dry-run switch, platforms (secret refs only), plugins with config schemas, policies, budgets, LLM routing, fix config, GitHub identity, control history | Kill switch / dry run (admin) |
+| **Settings & controls** | Kill switch and dry-run switch, **agent registry** (what each agent may request), **autonomy rules** with the bundle hash, platforms (secret refs only), plugins, policies, budgets, LLM routing, fix config, GitHub identity, control history | Kill switch / dry run (admin) |
 
 ## Roles and security
 | Role | Can |
@@ -85,17 +93,14 @@ For UI development, use `npm run dev` (http://localhost:5173, hot reload; it pro
   - live runs every 10 s
   - costs and settings every 60 s
 - **No flicker:** the previous data stays on screen while refreshing.
-- **Server-side caches:**
-  - pipelines 60 s
-  - active runs 15 s
-  - billing 5 min (a cold SQL warehouse can take ~20 s)
-  - GitHub diffs 60 s
+- **Platform state** comes from the observer's snapshots, refreshed on every data-plane poll. The platform's `last_poll` shows how fresh they are. Costs are refreshed every 30 min (`system.billing.usage`, or a duration estimate).
+- **Server-side cache:** GitHub diffs, 60 s.
 - **After an action:** every query is refreshed.
 
 ## Hosting
-- **Docker:** one image, two commands: `pipeline-agent run` (exactly one replica) and `pipeline-agent console` (can scale out).
+- **Docker:** one image, three commands: `dataplane` and `control` (one active instance each, enforced by leases) and `console` (can scale out).
   - The multi-stage `Dockerfile` builds the UI with Node, then serves it from the Python image.
-  - `docker-compose.yml` runs agent + console + Postgres, with the console on localhost only.
+  - `docker-compose.yml` runs the three services plus Postgres, each with its own env file and key mounts, with the console on localhost only.
 - **Pilot:** Azure Container Apps (console behind Front Door + WAF, Entra ID).
 - **CI:** the `console-build` job type-checks and builds the UI on every PR.
 

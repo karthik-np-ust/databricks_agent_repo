@@ -1,89 +1,56 @@
 # 03 · Folder structure
 
-Status: ✅ built, ⏳ planned (folder doesn't exist yet).
+The pipelines themselves live in a separate repo ([karthik-np-ust/orders-pipelines](https://github.com/karthik-np-ust/orders-pipelines), locally `C:\Users\285509\orders-pipelines`); this repo is only the agent.
 
 ```
 databricks_agent/
-├─ README.md                      quick start + doc index
-├─ pyproject.toml                 core package "pipeline-agent" (CLI entry point: pipeline-agent)
-├─ Dockerfile, docker-compose.yml container image; Stage 1 stack (agent + Postgres)
-├─ .env.example                   every environment variable, with comments
-├─ .gitignore                     excludes .env, local DBs, simulator state
+├─ README.md                        quick start + doc index
+├─ pyproject.toml                   core package "pipeline-agent" (CLI: pipeline-agent); deps incl. langgraph, cryptography
+├─ Dockerfile, docker-compose.yml   one image; services dataplane / control / console / Postgres, secrets split per service
+├─ .env.example                     every variable, marked with the process that uses it
 │
-├─ src/pipeline_agent/            ✅ CORE: never imports a platform SDK
-│  ├─ __init__.py                 version + PLUGIN_API_VERSION
-│  ├─ cli.py                      run | once | check | plugins | incidents | audit
-│  ├─ runtime.py                  builds plugins, store, notifier, monitor from config
-│  ├─ config.py                   Settings (AGENT_* env) + AgentConfig (config/*.yaml)
-│  ├─ secrets.py                  env:// secret references (kv:// planned)
-│  ├─ monitor.py                  the poll loop (tick), action execution
-│  ├─ policy.py                   decision table, thresholds, caps, circuit breaker
-│  ├─ sdk/                        plugin SDK
-│  │  ├─ models.py                canonical data model
-│  │  ├─ capabilities.py          Capability enum + RunSource/RunController/... protocols
-│  │  ├─ plugin.py                PluginManifest, PlatformInstance, PlatformPlugin
-│  │  ├─ registry.py              entry-point discovery, API version check
-│  │  └─ classify.py              rule-based ErrorClassifier
-│  ├─ knowledge/generic_errors.yaml   platform-neutral error rules
-│  ├─ security/                   redact.py (masking), audit.py (append-only audit)
-│  ├─ notify/webhook.py           console / Teams / Slack / generic notifiers
-│  ├─ store/db.py                 SQLAlchemy models + StateStore
-│  ├─ testing/contract.py         PluginContractSuite (plugin conformance tests)
-│  ├─ net.py                      OS trust store (corporate TLS inspection)
-│  ├─ llm/                        ✅ gateway.py (budgets, redaction, fallback, ledger), triage.py (diagnosis)
-│  ├─ fix/                        ✅ patch.py (LLM fix + guards), flow.py (dev → qa → human → prod state machine)
-│  ├─ git/                        ✅ github.py (REST: tree, commits, PRs, merges, checks, workflow runs)
-│  ├─ llm/context.py              ✅ condenses JVM traces for LLM and humans
-│  ├─ integrations/               ⏳ Phase 6: OpenLineage receiver, generic REST/SQL plugins
-│  └─ api/                        ✅ app.py (FastAPI, security headers, SPA), auth.py (roles, signed sessions), views.py, actions.py, context.py
+├─ config/
+│  ├─ platforms.yaml                platform instances (simulator, Databricks: env prefixes, Git folders, git_url)
+│  ├─ pipelines.yaml                per-pipeline policy: thresholds, rerun caps, auto_fix, reconcile checks
+│  ├─ policy/autonomy.yaml          autonomy matrix (L0–L5), limits; hashed into every signed request
+│  ├─ agents/*.yaml                 agent manifests: monitoring, triage, recovery, testing, reconciliation, console
+│  ├─ llm.yaml, budgets.yaml        model fallback lists / aliases, LLM budgets
+│  └─ fix.yaml                      pipelines repo, promotion dev → qa → main, guards (allowed/forbidden/protected)
+│
+├─ src/pipeline_agent/              CORE (never imports a platform SDK)
+│  ├─ cli.py                        dataplane | control | console | approvals | kedb | keys | check | incidents | triage | fix | llm | audit …
+│  ├─ runtime.py                    builds the two planes (build_data_plane, build_control_plane), checkpointer, policy engine
+│  ├─ config.py                     Settings (AGENT_* env) + AgentConfig (config/*.yaml)
+│  │
+│  ├─ control_plane/                CONTROL PLANE (no platform credentials)
+│  │  ├─ orchestrator.py            the LangGraph incident graph (intake … close) + routing
+│  │  ├─ codefix.py                 code-fix nodes: fix, tests, repair, PRs, merge, deploy, KEDB proposal
+│  │  ├─ runner.py                  pipeline-agent control: lease, starts/resumes threads, timeouts, retries
+│  │  ├─ agents/                    monitoring, triage, planner, testing, reconciliation
+│  │  ├─ approvals.py, registry.py, deps.py, state.py
+│  ├─ boundary/                     TRUST BOUNDARY: capabilities, ActionRequest (signed), queue, events
+│  ├─ data_plane/                   DATA PLANE: executor, ledger, router, observer (events + snapshots), service
+│  ├─ autonomy/engine.py            policy decision point (bundle, rules, decision)
+│  ├─ security/                     signing.py (Ed25519), redact.py, audit.py
+│  ├─ kedb.py, evidence.py, leases.py
+│  ├─ llm/                          gateway (budgets, ledger, redaction), model_gateway (aliases), triage
+│  ├─ fix/patch.py                  Recovery fix writer + guards (the promotion lives in control_plane/codefix.py)
+│  ├─ git/github.py                 GitHub REST client, GitHub App auth
+│  ├─ api/                          Ops Console API: views (read), actions (queue, never execute), control (approvals, requests, KEDB, agents, policy, evidence)
+│  ├─ sdk/                          plugin SDK: models, capabilities (incl. ActionProvider), plugin, registry, classify
+│  ├─ knowledge/generic_errors.yaml platform-neutral KEDB seed
+│  ├─ notify/, store/db.py, secrets.py, net.py, testing/contract.py
 │
 ├─ plugins/
-│  ├─ agent-plugin-simulator/     ✅ reference plugin: fake pipelines with behaviours
-│  │  ├─ src/pipeline_agent_simulator/plugin.py, knowledge/errors.yaml
-│  │  └─ tests/                   contract suite + simulator tests
-│  ├─ agent-plugin-databricks/    ✅ Databricks Jobs plugin
-│  │  ├─ src/pipeline_agent_databricks/plugin.py, knowledge/errors.yaml
-│  │  └─ tests/                   contract suite against a fake WorkspaceClient
-│  └─ agent-plugin-snowflake/     ⏳ Phase 6
+│  ├─ agent-plugin-databricks/      Jobs API 2.2, repair_run, Git-folder sync, git_source tests, SQL profiles, billing
+│  └─ agent-plugin-simulator/       deterministic fake platform (incl. all data-plane actions) for demos and tests
 │
-├─ config/                        ✅ agent configuration (no secrets)
-│  ├─ platforms.yaml              platform instances (simulator + dbx-free)
-│  ├─ llm.yaml                    model routing (triage and fix models, fallbacks)
-│  ├─ fix.yaml                    fix flow: repo, promotion order, allowed paths, guards
-│  ├─ pipelines.yaml              policies: thresholds, rerun caps, auto_fix, envs
-│  └─ budgets.yaml                LLM budgets (per incident / per day)
-│
-├─ sample_pipelines/              ✅ demo Databricks Asset Bundle (what the agent watches and fixes)
-│  ├─ databricks.yml              targets dev / qa / prod in one workspace
-│  ├─ resources/jobs.yml          orders_pipeline (3 tasks), sales_report, partner_feed_ingest
-│  ├─ src/                        ingest_bronze, transform_silver, build_gold, sales_report, partner_feed
-│  │  └─ common/                  config (table names), schemas, dq checks
-│  ├─ tests/ + fixtures/          pytest (pure Python + Spark; Spark needs Java)
-│  ├─ faults/*.yaml               release-fault definitions (find/replace edits)
-│  └─ requirements-dev.txt        pyspark + pytest for CI
-│
-├─ scripts/                       ✅ demo tooling (Databricks SDK)
-│  ├─ _common.py                  client, SQL helper, job lookup, landing upload
-│  ├─ generate_data.py            synthetic orders + data-fault scenarios
-│  ├─ setup_workspace.py          catalogs/schemas/volume/secret scopes + clean data
-│  ├─ inject_fault.py             runs any of the 14 fault scenarios
-│  ├─ reset_demo.py               restores data, secrets, tables (optional git reset)
-│  ├─ phase0_checks.py            feasibility checks (Databricks + OpenRouter)
-│  └─ deploy_sdk.py               bundle deploy via Python SDK (when the CLI is unavailable)
-│
-├─ tests/                         ✅ core tests: monitor/policy scenarios, LLM gateway/triage, units, demo kit
-├─ .github/
-│  ├─ workflows/ci.yml            PR checks: tests, Spark tests, agent path guard, bundle validate
-│  ├─ workflows/deploy.yml        branch → target deploy (dev/qa/main→prod) + smoke runs
-│  ├─ workflows/demo-ops.yml      manual: workspace setup, fault injection, reset (runs on GitHub, not the laptop)
-│  └─ CODEOWNERS                  approvers; admins own .github, config, scripts, faults
-├─ frontend/                      ✅ Ops Console: React 18 + TypeScript + Vite + Fluent UI v9 + TanStack Query + ECharts
-│  ├─ src/pages/                  CommandCenter, Pipelines, PipelineDetail, LiveRuns, Incidents, IncidentDetail, Fixes/Approvals, Costs, Observability, Audit, Settings, Login
-│  ├─ src/components/             AppShell, Lifecycle, DiffView, EChart, ChartCard (chart + table view), Status badges, ReasonDialog
-│  ├─ src/api/                    typed client, TanStack Query hooks
-│  └─ src/theme.ts, src/viz.ts    UST brand theme; validated chart palette
-└─ docs/                          this documentation
+├─ frontend/                        React + Fluent UI Ops Console (pages incl. Approvals, Requests & ledger, Known errors)
+├─ scripts/                         phase0_checks.py (--redesign), inject_fault.py, _common.py
+├─ tests/                           agent tests (see 12-testing.md)
+├─ docs/                            this documentation
+└─ var/                             (git-ignored) signing keys, evidence blobs, LangGraph checkpoints
 ```
 
 ## Why plugins are separate packages
-Each plugin has its own `pyproject.toml` and registers itself through the `pipeline_agent.plugins` entry point. Installing it makes it available, and removing it leaves the core untouched. A new ETL tool is a new folder under `plugins/`; see [09-plugin-guide.md](09-plugin-guide.md).
+A new ETL tool is a new package that registers an entry point (`pipeline_agent.plugins`) and passes the contract kit. The core, the control plane and the console don't change. Data-plane actions (repair, code sync, tests, profiles) are an optional `ActionProvider` on the same plugin; see [09](09-plugin-guide.md).

@@ -1,6 +1,21 @@
 # Demo stack: data plane + control plane + Ops Console + Postgres (one image, three commands).
-# Shared ./var volume holds evidence blobs and the signing keys.
-# TODO R7: give the data plane only the public key and the Databricks token only to the data plane.
+#
+# Secrets are split per process (trust boundary):
+#   .env.dataplane  DATABRICKS_HOST / DATABRICKS_TOKEN / DATABRICKS_WAREHOUSE_ID     -> dataplane only
+#   .env.control    OPENROUTER_API_KEY, GITHUB_APP_* (the agent's identity)          -> control only
+#   .env.console    AGENT_CONSOLE_SECRET, OPENROUTER_API_KEY (re-diagnosis), GITHUB_APP_* (diffs)
+# Signing keys (pipeline-agent keys generate --out var/keys):
+#   private key -> control only; public key -> dataplane only. The console needs neither.
+# Copy .env.example to the three files and keep only each process's lines (see docs/08-configuration.md).
+x-common: &common
+  build: .
+  volumes: &config
+    - ./config:/app/config:ro
+  depends_on:
+    db:
+      condition: service_healthy
+  restart: unless-stopped
+
 services:
   db:
     image: postgres:16
@@ -16,50 +31,49 @@ services:
       retries: 10
 
   dataplane:
-    build: .
+    <<: *common
     command: ["pipeline-agent", "dataplane"]
-    env_file: .env
+    env_file: .env.dataplane
     environment:
       AGENT_DATABASE_URL: postgresql+psycopg://agent:agent@db:5432/agent
+      AGENT_TRUSTED_KEYS: '["/run/keys/signing_key.pub.pem"]'
+      AGENT_EVIDENCE_DIR: /app/var/evidence
     volumes:
       - ./config:/app/config:ro
-      - agentvar:/app/var
-    depends_on:
-      db:
-        condition: service_healthy
-    restart: unless-stopped
+      - ./var/keys/signing_key.pub.pem:/run/keys/signing_key.pub.pem:ro
+      - evidence:/app/var/evidence
 
   control:
-    build: .
+    <<: *common
     command: ["pipeline-agent", "control"]
-    env_file: .env
+    env_file: .env.control
     environment:
       AGENT_DATABASE_URL: postgresql+psycopg://agent:agent@db:5432/agent
       AGENT_CHECKPOINT_URL: postgresql://agent:agent@db:5432/agent
+      AGENT_SIGNING_KEY_PATH: /run/keys/signing_key.pem
+      AGENT_EVIDENCE_DIR: /app/var/evidence
+      GITHUB_APP_PRIVATE_KEY_PATH: /run/keys/github_app.pem
     volumes:
       - ./config:/app/config:ro
-      - agentvar:/app/var
-    depends_on:
-      db:
-        condition: service_healthy
-    restart: unless-stopped
+      - ./var/keys/signing_key.pem:/run/keys/signing_key.pem:ro
+      - ${GITHUB_APP_KEY_FILE:-./var/keys/github_app.pem}:/run/keys/github_app.pem:ro
+      - evidence:/app/var/evidence:ro
 
   console:
-    build: .
-    command: ["pipeline-agent", "console"]
-    env_file: .env
+    <<: *common
+    command: ["pipeline-agent", "console", "--host", "0.0.0.0"]
+    env_file: .env.console
     environment:
       AGENT_DATABASE_URL: postgresql+psycopg://agent:agent@db:5432/agent
+      AGENT_EVIDENCE_DIR: /app/var/evidence
+      GITHUB_APP_PRIVATE_KEY_PATH: /run/keys/github_app.pem
     volumes:
       - ./config:/app/config:ro
-      - agentvar:/app/var
+      - ${GITHUB_APP_KEY_FILE:-./var/keys/github_app.pem}:/run/keys/github_app.pem:ro
+      - evidence:/app/var/evidence:ro
     ports:
       - "127.0.0.1:8080:8080"   # localhost only
-    depends_on:
-      db:
-        condition: service_healthy
-    restart: unless-stopped
 
 volumes:
   pgdata:
-  agentvar:
+  evidence:

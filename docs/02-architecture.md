@@ -1,131 +1,170 @@
 # 02 · Architecture
 
-## Components (current build)
+The agent follows the **Agentic AIOps for DataOps v2** reference architecture, scaled to the demo environment:
 
+- a technology-agnostic **control plane** of LangGraph agents that reason, plan and *request* actions;
+- a **trust boundary** that only signed, policy-checked ActionRequests cross;
+- a technology-specific **data plane** that holds the platform credentials, verifies every request and executes it.
+
+```mermaid
+flowchart TB
+  subgraph EXP["Experience & integration"]
+    UI["Ops Console (React)"] --- CLI["CLI"] --- NOTIFY["Teams / Slack webhooks"]
+    GH["GitHub (pipelines repo, human merge)"]
+  end
+  subgraph CP["CONTROL PLANE · pipeline-agent control / console (no platform credentials)"]
+    ORCH["LangGraph orchestrator<br/>one checkpointed thread per incident"]
+    AG["Plug-in agents<br/>Monitoring · Triage · Planner/Recovery · Testing · Reconciliation"]
+    POL["Policy decision<br/>autonomy L0–L5 (autonomy.yaml)"]
+    REG["Agent registry<br/>config/agents/*.yaml"]
+    MG["Model gateway<br/>aliases → OpenRouter"]
+    KEDB["Known Error DB<br/>curated"]
+    EV["Evidence store<br/>redacted, content-addressed"]
+    APPR["Approvals (interrupt / resume)"]
+  end
+  subgraph TB["TRUST BOUNDARY"]
+    REQ["Signed ActionRequest (Ed25519)<br/>idempotency key · expiry · bundle hash · approval"]
+    EVT["Structured events & results"]
+  end
+  subgraph DP["DATA PLANE · pipeline-agent dataplane (holds the Databricks token)"]
+    EXE["Execution service<br/>verify → re-check policy → preconditions"]
+    LED["Execution ledger<br/>RESERVED / SUCCESS / FAILED / UNKNOWN"]
+    ROUTE["Capability router"]
+    OBS["Observer<br/>events + snapshots"]
+    DBX["Databricks adapter<br/>Jobs · repair_run · Git folders · tests · SQL"]
+  end
+  UI --> ORCH
+  ORCH --> AG --> POL --> REQ --> EXE --> LED --> ROUTE --> DBX
+  DBX --> OBS --> EVT --> ORCH
+  AG <--> KEDB
+  AG <--> EV
+  AG --> MG
+  POL <--> REG
+  ORCH <--> APPR
+  AG <--> GH
 ```
-┌──────────────────────────── pipeline-agent (Python service) ────────────────────────────┐
-│  cli.py ─► runtime.py (wiring)                                                           │
-│              │                                                                           │
-│              ▼                                                                           │
-│  monitor.py  Monitor.tick(): for each platform instance                                  │
-│     │          list pipelines, list runs since watermark, upsert state, evaluate, act    │
-│     ├─► sdk/classify.py   rule-based ErrorClass (core rules + plugin knowledge pack)     │
-│     ├─► policy.py         decision table (below); thresholds, caps, circuit breaker      │
-│     ├─► security/         redact.py (secrets/PII masking), audit.py (append-only log)    │
-│     ├─► notify/           console, Teams (Adaptive Card), Slack, generic webhook         │
-│     └─► store/db.py       SQLAlchemy: runs, actions, incidents, audit_log, watermarks    │
-│                                                                                          │
-│  sdk/  capability protocols, canonical models, PluginManifest, registry (entry points)   │
-│  testing/  contract test kit every plugin must pass                                      │
-└──────────────────────────────────────────────────────────────────────────────────────────┘
-          ▲ entry points "pipeline_agent.plugins"
-          │
-  plugins/agent-plugin-simulator   (reference plugin, demos, tests)
-  plugins/agent-plugin-databricks  (Jobs API 2.2 via databricks-sdk)
-  plugins/agent-plugin-snowflake   (Phase 6)
-```
 
-## Capability model
-A plugin implements only the interfaces its platform supports ([src/pipeline_agent/sdk/capabilities.py](../src/pipeline_agent/sdk/capabilities.py)):
+## Processes
 
-| Capability | Interface | Used for |
+| Process | Command | Holds | Never holds |
+|---|---|---|---|
+| Data plane | `pipeline-agent dataplane` | Databricks token, the **public** signing key | LLM key, GitHub identity, private key |
+| Control plane | `pipeline-agent control` | **Private** signing key, OpenRouter key, GitHub App (the agent's identity) | Platform credentials |
+| Console | `pipeline-agent console` | Session secret; OpenRouter (re-diagnosis); GitHub App (PR diffs, read) | Platform credentials, signing keys |
+
+All three share one database (SQLite locally, Postgres when hosted) and an evidence directory. Each process holds a **lease**, so only one data plane and one control plane are active at a time. Compose gives each process its own env file and key mounts; see [docker-compose.yml](../docker-compose.yml).
+
+## Reference diagram → implementation
+
+| Reference box | Implementation | Code |
 |---|---|---|
-| MONITOR (required) | `RunSource.list_pipelines()`, `list_runs(since, active_only)` | Polling |
-| CANCEL, RERUN | `RunController.cancel(run)`, `rerun(pipeline, params)` | Threshold and transient handling |
-| LOGS | `LogProvider.failure_context(run)` | Classification, incidents, LLM context (Phase 2) |
-| COST | `CostProvider.costs(since)` | FinOps view (Phase 4) |
-| CODE | `CodeLocator.code_ref(pipeline)` | Fix flow (Phase 3) |
-| EVENTS | `EventSource.parse_webhook(...)` | Push instead of polling (Stage 2) |
+| Agent orchestrator (LangGraph) | One `StateGraph` thread per work item, SQLite/Postgres checkpointer, `interrupt()` for approvals and async waits | [control_plane/orchestrator.py](../src/pipeline_agent/control_plane/orchestrator.py), [runner.py](../src/pipeline_agent/control_plane/runner.py) |
+| Planner & reasoner | KEDB runbook first, else by failure class; proposes concrete steps, never executes | [agents/planner.py](../src/pipeline_agent/control_plane/agents/planner.py) |
+| Agent & capability registry | Manifests (A2A-card shaped): capabilities an agent may request, model alias, risk class | [config/agents/](../config/agents), [registry.py](../src/pipeline_agent/control_plane/registry.py) |
+| Policy decision & approvals | Autonomy matrix agent × capability × env × failure pattern → L0–L5; OPA-shaped decision; sha256 bundle | [config/policy/autonomy.yaml](../config/policy/autonomy.yaml), [autonomy/engine.py](../src/pipeline_agent/autonomy/engine.py), [approvals.py](../src/pipeline_agent/control_plane/approvals.py) |
+| Model gateway (adopt, wrap thinly) | Agents ask for an alias (`triage`, `fix`, `test`); budgets, redaction, call ledger in `LLMGateway` | [llm/model_gateway.py](../src/pipeline_agent/llm/model_gateway.py), [llm/gateway.py](../src/pipeline_agent/llm/gateway.py) |
+| Monitoring agent | Data-plane events → work items (deduplicated; agent-started runs never open a second incident) | [agents/monitoring.py](../src/pipeline_agent/control_plane/agents/monitoring.py) |
+| Triage agent | KEDB match on redacted evidence; LLM only for unknown and code failures; budget stop escalates | [agents/triage.py](../src/pipeline_agent/control_plane/agents/triage.py), [llm/triage.py](../src/pipeline_agent/llm/triage.py) |
+| Recovery agent | Runtime runbooks (rerun, repair, cancel+rerun) and the code fix (patch writer + guards) with promotion | [planner.py](../src/pipeline_agent/control_plane/agents/planner.py), [codefix.py](../src/pipeline_agent/control_plane/codefix.py), [fix/patch.py](../src/pipeline_agent/fix/patch.py) |
+| *Testing agent* (added) | Writes Databricks test notebooks; they run in Databricks on the fix branch and gate every code fix | [agents/testing.py](../src/pipeline_agent/control_plane/agents/testing.py) |
+| Reconciliation agent | Run outcomes plus read-only `data.profile` checks (rows, duplicate keys, nulls) | [agents/reconciliation.py](../src/pipeline_agent/control_plane/agents/reconciliation.py) |
+| PostgreSQL | One schema for both planes (work items, checkpoints, approvals, audit, KEDB, ledger, …) | [store/db.py](../src/pipeline_agent/store/db.py) |
+| Known Error DB (structured) | Seeded from knowledge packs; agents only *propose*; an admin approves | [kedb.py](../src/pipeline_agent/kedb.py) |
+| Evidence store + untrusted-evidence rule | Redacted, sha256-addressed blobs; integrity-checked; reaches a model only as `<untrusted_evidence>` | [evidence.py](../src/pipeline_agent/evidence.py) |
+| Valkey / Redis (locks) | `leases` table (leader lease per process) | [leases.py](../src/pipeline_agent/leases.py) |
+| Event bus | `events` outbox table, polled | [boundary/events.py](../src/pipeline_agent/boundary/events.py) |
+| Tool gateway | Internal read-only tools (evidence, repo files, KEDB); no execute tool: agents emit ActionRequests | agents above |
+| Trust boundary | Ed25519-signed ActionRequests in a pull queue; events and results flow back | [boundary/](../src/pipeline_agent/boundary), [security/signing.py](../src/pipeline_agent/security/signing.py) |
+| Execution service | Verify signature and expiry → bundle hash = ours → policy re-evaluated → live preconditions → ledger → execute → post-conditions → evidence | [data_plane/executor.py](../src/pipeline_agent/data_plane/executor.py) |
+| Execution ledger | One row per idempotency key; a replay returns the recorded outcome; a crash mid-call becomes UNKNOWN (never auto-retried) | [data_plane/ledger.py](../src/pipeline_agent/data_plane/ledger.py) |
+| Capability router & registry | Stable capability ids → plugin adapters, with preconditions and post-conditions | [boundary/capabilities.py](../src/pipeline_agent/boundary/capabilities.py), [data_plane/router.py](../src/pipeline_agent/data_plane/router.py) |
+| Azure Databricks adapter | Jobs API 2.2, `repair_run`, Git-folder sync (Repos API), `jobs.submit` + `git_source` tests, SQL profiles | [plugins/agent-plugin-databricks](../plugins/agent-plugin-databricks) |
+| Identity & secrets broker | `env://` secret references; per-process env files; workload identity is pilot work | [secrets.py](../src/pipeline_agent/secrets.py) |
+| **Not built (by choice)** | Read-only diagnostic MCP servers (the observer already pushes the evidence), pgvector, graph store, Kafka, OPA (the evaluator is OPA-shaped), Langfuse/OpenTelemetry | [07](07-future-improvements.md) |
 
-The policy engine checks capabilities before acting. A platform without CANCEL/RERUN gets an escalation on a threshold breach, and without CODE an incident is never fix-eligible.
-
-## Canonical data model
-[src/pipeline_agent/sdk/models.py](../src/pipeline_agent/sdk/models.py):
-- `Pipeline`, `Run`, `RunRef`, `FailureContext`, `TaskFailure`, `CostRecord`, `CodeRef`, `RunEvent`
-- `Env`: dev, qa, prod
-- `RunStatus`: queued, running, succeeded, failed, cancelled, skipped, unknown
-- `ErrorClass`: transient, code, infra, unknown
-
-Every model keeps the original platform payload in `raw`.
-
-## Decision table ([src/pipeline_agent/policy.py](../src/pipeline_agent/policy.py))
-
-| Observed | Condition (checked in order) | Decision |
-|---|---|---|
-| Running over threshold | already handled | none |
-| | env not in `act_in_envs` | notify |
-| | platform lacks CANCEL/RERUN | escalate |
-| | reruns in last 24h ≥ `max_reruns_per_day` | escalate |
-| | circuit breaker open | escalate |
-| | otherwise | **cancel + rerun** |
-| Failed | already handled (incident or action exists) | none |
-| | env not in `act_in_envs` | notify |
-| | transient, reruns(transient) < `transient_retries`, breaker closed | **rerun** |
-| | transient otherwise | escalate |
-| | code | **open incident** (fix-eligible if `auto_fix` and CODE) |
-| | infra / unknown | escalate |
-
-**Threshold:** `max_duration_seconds` if set. Otherwise p95 of the last 30 successful runs × `baseline_multiplier`, once `baseline_min_samples` runs exist. With neither, there is no threshold.
-
-**Circuit breaker:** stops all automatic cancel/rerun once `max_actions_per_hour` real actions (dry-run actions excluded) have happened across all platforms in the last hour. This protects the Free Edition fair-use quota.
-
-## Polling and idempotency
-- **Window:** each tick reads runs that are active now, or that ended at or after `watermark − poll_overlap_minutes`. The first poll uses `initial_lookback_minutes`.
-- **Databricks:** the plugin also scans runs that started up to `max_run_lookback_hours` before the window, so long runs that finish inside the window aren't missed.
-- **Dedupe:** every decision is recorded as an action or incident keyed by `platform:pipeline:run`, so a run is never handled twice. Logs are fetched once per failed run.
-- **Isolation:** an exception in one platform is logged and audited, and the other platforms keep polling.
-
-## Environments in one workspace (Free Edition)
-| Branch | Bundle target | Job name | Data | Trigger |
-|---|---|---|---|---|
-| `dev` | dev | `[dev] orders_pipeline` | catalog `dev` | on demand (CI smoke run) |
-| `qa` | qa | `[qa] orders_pipeline` | catalog `qa` | on demand (CI smoke run) |
-| `main` | prod | `orders_pipeline` | catalog `prod` | schedule |
-
-The Databricks plugin maps the name prefix to `Env` (`env_prefixes` config). Fallback when catalogs can't be created: `layout=schema` → `workspace.<env>_bronze.orders`.
-
-## Planned flows (not built yet)
-
-**Phase 2: LLM triage (built).** After an incident is created, `Monitor.run_triage` calls `Triage.diagnose`, which goes through `LLMGateway.chat`:
-1. budget check against the `llm_calls` ledger
-2. redaction of every message
-3. model fallback
-4. ledger write
-
-The model answers through a single `report_diagnosis` tool, and its JSON is validated into `Diagnosis`. The result is stored on the incident and sent as a follow-up notification. Budget stop → incident escalated. LLM outage → audit `llm_unavailable`; monitoring continues. The rule-based class still drives actions.
-
-**Phase 3: fix flow (built).** [fix/flow.py](../src/pipeline_agent/fix/flow.py) is a state machine persisted in `fix_attempts`. Each monitor tick moves every active attempt at most one step, so the flow survives restarts and can wait for CI, deploys or a human.
+## The incident graph
 
 ```
-PLANNED ─ read code at main (GitHub API) → LLM writes fix + test → guards → commit fix/incident-N → PR → dev
-PR_OPEN(dev)  ─ required checks green → agent merges (auto_merge) ─► DEPLOYING(dev) ─ deploy.yml run green
-PR_OPEN(qa)   ─ PR dev → qa; checks green → agent merges if rules allow, else waits for a human
-DEPLOYING(qa) ─ deploy green → PR qa → main
-PR_OPEN(main) ─ checks green → "Approval needed" notification; the agent NEVER merges this
-              ─ human merges ─► DEPLOYING(main) ─ prod deploy (prod Environment approval) green
-              ─► rerun prod job ─► VERIFYING ─ rerun succeeded ─► RESOLVED (incident resolved)
-CI failure on the fix PR → REPAIR: read the CI job log, LLM fixes, new commit on the same PR (max repair_attempts)
-dev deploy/smoke-run failure → REPAIR: read the deploy output, commit on the fix branch, follow-up PR → dev (same budget)
-Repairs exhausted, or a failing promotion/deploy → FAILED (PR comment with failures). PR closed unmerged → REJECTED.
-No progress for max_wait_hours → FAILED. All three escalate the incident.
+intake → triage → plan ─┬─(steps)→ decide ─┬─ L4/L5 → submit → wait_result ─┬─ watch → wait_run ─┐
+                        │                  ├─ L3   → request_approval → wait_approval → decide    │
+                        │                  └─ L0–L2 → close (escalate / recommend)                 │
+                        ├─(code fix)→ fix_write → fix_tests → [tests.run] ─fail→ fix_repair ↺      │
+                        │             fix_next → fix_open_pr → fix_wait_checks → fix_merge ─→ fix_deploy
+                        │                                    → fix_wait_merge (prod: human) ─→ fix_deploy
+                        └─(none)→ close                                  advance → decide | fix_next | reconcile → close
 ```
 
-**Starting a fix:** after triage, when the incident is fix-eligible (`auto_fix` + CODE capability), still `open`, and the diagnosis `fix_type` is `code_change`/`data_fix`. You can also start one by hand with `pipeline-agent fix <incident>`. At most `max_concurrent` fixes run at once.
+**Replay safety.** A resumed node runs again from its start, so:
+- the `wait_*` nodes only call `interrupt()` and record what came back;
+- every side effect (incident row, approval row, signed request, GitHub commit or PR) sits in its own node before a wait;
+- each side effect is idempotent: one incident per run, one approval per (thread, capability), request keys of the form `wi-<id>:<results so far>:<capability>`, and an existing open PR is reused.
 
-**Patch guards** ([fix/patch.py](../src/pipeline_agent/fix/patch.py)) run before anything is committed:
-- allowed paths only
-- Python compiles
-- protected patterns (`assert_not_null(`) never decrease
-- a test must change
-- no secrets
-- file count and size limits
+**Resuming.** The runner resumes a waiting thread when:
+- an approval is decided;
+- an action result arrives;
+- a `run_finished` event comes in;
+- a PR's checks finish;
+- a prod PR is merged or closed;
+- a wait times out (approval 24h; action and run 2h; PR merge `fix.max_wait_hours`), which escalates the incident.
 
-The model gets one retry with the validation errors fed back. Guards also run **pyflakes** for undefined names (e.g. a test using `F` without importing it).
+## Runbooks and autonomy (default policy)
 
-**Self-repair:** when CI fails on the fix PR, the agent downloads the failed job's log (GitHub App: Actions read). It keeps the failure lines (`E …`, `FAILED …`, the summary) and sends them to the model with the branch's current files. The model's corrected files are pushed as a new commit on the same PR, with a PR comment explaining what was fixed. The guards check the **combined** change against `main`, so a repair can't do what the first fix wasn't allowed to do (e.g. delete a DQ check).
+| Situation | Plan | Level | Who approves |
+|---|---|---|---|
+| Transient failure, prod | rerun (watched) + reconciliation checks | L4 | pre-approved, within rerun caps |
+| Transient failure, dev/qa | rerun | L2 | recommend only; a human acts |
+| Run over its threshold | cancel + rerun | L3 | one console approval covers both steps |
+| Code failure, `auto_fix` | fix → Databricks tests → dev → qa → prod | L4 dev/qa merge, sync, smoke; L3 prod | prod: your **GitHub merge** approves the prod sync and the repair of the failed run |
+| Code failure, no `auto_fix` | parked as "needs a code fix" | – | an approver clicks **Start fix** |
+| Infra / permission / unknown | escalate (evidence only) | L1 | a human |
+| Console cancel / rerun | one step | L3 | the requester's console session |
+| Read-only (`data.profile`, `get_run`) | – | L5 | – |
+| Kill switch on | nothing | L0 | – |
 
-**Idempotency:** branch creation moves an existing branch, and PR creation reuses an open PR. A step that fails mid-way (network) is retried on the next tick without duplicates.
+Rerun caps (per pipeline per 24h, from `pipelines.yaml`) and the circuit breaker (actions per hour) are counted from the execution ledger. Both planes evaluate the same policy bundle. The data plane refuses a request decided under a different bundle hash.
 
-**Phase 4: API and Ops Console.** FastAPI (REST + SSE) and React/Fluent UI.
+## Code-fix path (gated by the Testing agent)
 
-**Stage 2/3 hosting:** see [07-future-improvements.md](07-future-improvements.md).
+1. **Recovery** writes the smallest notebook change on `fix/incident-<id>`, guarded:
+   - allowed paths only;
+   - must compile and pass pyflakes;
+   - `DQAssertionError` checks kept;
+   - forbidden runtime patterns rejected;
+   - no secret-like strings.
+2. The **Testing agent** writes test notebooks in `tests/`, guarded:
+   - isolated `test_<id>_*` schemas;
+   - runs `../notebooks/<name>` via `dbutils.notebook.run`;
+   - drops its schemas afterwards.
+3. `tests.run` runs them **in Databricks from the fix branch** (`jobs.submit` + `git_source`). A failure, or failing CI on the PR, sends the output back to Recovery (at most `repair_attempts`).
+4. **dev, then qa:**
+   - open a PR and wait for the checks;
+   - merge (`code.merge`, L4);
+   - `code.sync` pulls the environment's Git folder to the merge commit;
+   - smoke-run that environment's job.
+5. **prod:** the PR into `main` waits for a **human merge**. That merge is the approval for the prod `code.sync` and for `pipeline.repair` (re-run only the failed tasks of the original run).
+6. Reconciliation, then resolved. A KEDB entry is proposed for an admin to approve.
+
+## Data model ([store/db.py](../src/pipeline_agent/store/db.py))
+
+| Table | Purpose |
+|---|---|
+| `runs`, `watermarks`, `platform_snapshots` | What the observer saw (runs; per-platform pipelines, active runs, health and costs for the console) |
+| `events`, `work_items` | Data-plane events → control-plane work items (graph threads) |
+| `action_requests`, `action_results`, `execution_ledger` | The trust boundary and exactly-once execution |
+| `approvals` | L3 decisions that resume a graph |
+| `incidents`, `fix_attempts`, `actions` | Projections for the console (incident lifecycle, fix promotion, runtime actions) |
+| `known_errors`, `evidence` | Knowledge and evidence metadata (blobs live in `var/evidence/`) |
+| `llm_calls` | LLM ledger: the source of truth for budgets |
+| `audit_log` | Append-only record of every agent and human action |
+| `agent_controls`, `leases` | Kill switch and dry run; heartbeats; leader leases |
+
+LangGraph checkpoints live next to these: in `var/checkpoints.sqlite`, or in Postgres via `AGENT_CHECKPOINT_URL`.
+
+## Security properties
+
+- **Agents never execute anything.** The only path to a platform change is a request that is signed, checked against policy (twice), checked against live preconditions, and recorded once in the ledger.
+- **Secrets stay with their owner.** Platform credentials exist only in the data plane. Logs, errors, evidence, notifications, the audit log and every LLM prompt are redacted. Evidence is untrusted data, framed as such.
+- **Approvals are explicit.** L3 actions need a console approver. Prod code needs the GitHub merge (branch protection plus Code Owners). An approval kind a rule doesn't accept escalates instead of looping.
+- **Tampering is detected.** A changed request fails signature verification. A changed policy fails the bundle-hash check. A changed evidence blob fails its sha256 check.
+
+More detail: [11 · Security](11-security.md).

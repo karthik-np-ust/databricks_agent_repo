@@ -10,7 +10,6 @@ from statistics import mean
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from .. import __version__
-from ..sdk.capabilities import Capability
 from ..sdk.models import Run, utcnow
 from ..sdk.registry import discover_plugins
 from ..store.db import FixAttemptRow, IncidentRow, RunRow
@@ -71,32 +70,18 @@ def _start_of_day(now: datetime) -> datetime:
     return datetime.combine(now.date(), dtime.min, tzinfo=timezone.utc)
 
 
+# The console never calls a platform: everything below comes from the observer's snapshots
+# (data plane), so this process needs no platform credentials.
 def _pipelines_live(c: ConsoleContext) -> list[dict]:
-    def produce():
-        out = []
-        for iid, inst in c.instances.items():
-            try:
-                for p in inst.run_source.list_pipelines():
-                    out.append({"platform_id": iid, "plugin": inst.manifest.name, "pipeline_id": p.pipeline_id,
-                                "name": p.name, "env": p.env.value, "url": p.url, "tags": p.tags})
-            except Exception as exc:
-                log.warning("list_pipelines failed for %s: %s", iid, exc)
-        return out
-
-    return c.cache.get("pipelines", 60, produce)
+    return [p for data, _ in c.store.snapshots("pipelines").values() for p in data or []]
 
 
 def _active_runs(c: ConsoleContext) -> list[Run]:
-    def produce():
-        out = []
-        for inst in c.instances.values():
-            try:
-                out += inst.run_source.list_runs(since=utcnow(), active_only=True)
-            except Exception as exc:
-                log.warning("active runs failed for %s: %s", inst.instance_id, exc)
-        return out
+    return [Run.model_validate(r) for data, _ in c.store.snapshots("active_runs").values() for r in data or []]
 
-    return c.cache.get("active_runs", 15, produce)
+
+def _platforms(c: ConsoleContext) -> list[dict]:
+    return [{"id": iid, **data, "last_poll": iso(updated)} for iid, (data, updated) in sorted(c.store.snapshots("platform").items())]
 
 
 # --------------------------------------------------------------------------- me
@@ -119,7 +104,6 @@ def overview(request: Request) -> dict:
     resolved = [i for i in incidents if i.status == "resolved"]
     mttr = mean((i.updated_at - i.created_at).total_seconds() for i in resolved) if resolved else None
     fixed_by_agent = {f.incident_id for f in fixes if f.state == "resolved"}
-    watermarks = c.store.list_watermarks()
     last_tick = controls.get("last_tick")
     pipelines = _pipelines_live(c)
     fixes_out = [_fix(f, promotion) for f in fixes]
@@ -131,11 +115,7 @@ def overview(request: Request) -> dict:
             "llm_enabled": c.settings.llm_enabled, "fix_enabled": c.settings.fix_enabled,
             "last_tick": last_tick,
             "poll_interval_s": c.settings.poll_interval_seconds,
-            "platforms": [
-                {"id": iid, "plugin": inst.manifest.name, "display_name": inst.manifest.display_name,
-                 "capabilities": sorted(cap.value for cap in inst.capabilities), "last_poll": iso(watermarks.get(iid))}
-                for iid, inst in c.instances.items()
-            ],
+            "platforms": [{k: p[k] for k in ("id", "plugin", "display_name", "capabilities", "last_poll")} for p in _platforms(c)],
         },
         "kpis": {
             "pipelines": len(pipelines),
@@ -168,18 +148,7 @@ def overview(request: Request) -> dict:
 # -------------------------------------------------------------------- platforms
 @router.get("/platforms")
 def platforms(request: Request) -> list[dict]:
-    c = ctx(request)
-    def health(inst):
-        try:
-            return {"ok": True, "message": inst.healthcheck()}
-        except Exception as exc:
-            return {"ok": False, "message": str(exc)[:200]}
-    return c.cache.get("platforms", 120, lambda: [
-        {"id": iid, "plugin": inst.manifest.name, "display_name": inst.manifest.display_name,
-         "version": inst.manifest.version, "capabilities": sorted(cap.value for cap in inst.capabilities),
-         "health": health(inst)}
-        for iid, inst in c.instances.items()
-    ])
+    return _platforms(ctx(request))
 
 
 # -------------------------------------------------------------------- pipelines
@@ -242,19 +211,19 @@ def runs(request: Request, hours: int = Query(24, ge=1, le=24 * 30), status: str
 def runs_active(request: Request) -> list[dict]:
     c = ctx(request)
     now = utcnow()
+    caps = {p["id"]: set(p["capabilities"]) for p in _platforms(c)}
     out = []
     for r in _active_runs(c):
         policy = c.config.policy_for(r.platform_id, r.pipeline_name)
         elapsed = r.elapsed(now)
         threshold = policy.max_duration_seconds
-        inst = c.instances.get(r.platform_id)
         out.append({
             "platform_id": r.platform_id, "pipeline_id": r.pipeline_id, "pipeline_name": r.pipeline_name,
             "run_id": r.run_id, "env": r.env.value, "status": r.status.value, "start_time": iso(r.start_time),
             "elapsed_s": elapsed.total_seconds() if elapsed else None, "threshold_s": threshold,
             "pct_of_threshold": round(100 * elapsed.total_seconds() / threshold) if elapsed and threshold else None,
             "url": r.url, "parameters": r.parameters,
-            "can_cancel": bool(inst and inst.supports(Capability.CANCEL)),
+            "can_cancel": "cancel" in caps.get(r.platform_id, set()),
         })
     return sorted(out, key=lambda r: -(r["pct_of_threshold"] or 0))
 
@@ -340,23 +309,17 @@ def costs_compute(request: Request, days: int = Query(14, ge=1, le=90)) -> dict:
     since = utcnow() - timedelta(days=days)
     names = {(p["platform_id"], p["pipeline_id"]): (p["name"], p["env"]) for p in _pipelines_live(c)}
 
-    def produce():
-        records, errors, estimate = [], [], False
-        for iid, inst in c.instances.items():
-            if not inst.supports(Capability.COST):
+    records, errors, estimate = [], [], False
+    for iid, (data, _) in c.store.snapshots("costs").items():  # refreshed by the observer every 30 min
+        if data.get("error"):
+            errors.append(f"{iid}: {data['error']}")
+        for rec in data.get("records", []):
+            if rec["usage_date"] < since.date().isoformat():
                 continue
-            try:
-                for rec in inst.costs.costs(since):
-                    name, env = names.get((iid, rec.pipeline_id or ""), (rec.pipeline_id or "other", rec.env.value if rec.env else None))
-                    estimate = estimate or rec.is_estimate
-                    records.append({"date": rec.usage_date.isoformat(), "platform_id": iid, "pipeline": name,
-                                    "env": env or (rec.env.value if rec.env else "unknown"), "quantity": rec.quantity,
-                                    "unit": rec.unit, "cost_usd": rec.estimated_cost_usd})
-            except Exception as exc:
-                errors.append(f"{iid}: {exc}"[:200])
-        return records, errors, estimate
-
-    records, errors, estimate = c.cache.get(f"costs:{days}", 300, produce)
+            name, env = names.get((iid, rec.get("pipeline_id") or ""), (rec.get("pipeline_id") or "other", rec.get("env")))
+            estimate = estimate or rec.get("is_estimate", False)
+            records.append({"date": rec["usage_date"], "platform_id": iid, "pipeline": name, "env": env or rec.get("env") or "unknown",
+                            "quantity": rec["quantity"], "unit": rec["unit"], "cost_usd": rec.get("estimated_cost_usd")})
     by_day_env: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     by_pipeline: dict[str, float] = defaultdict(float)
     for r in records:

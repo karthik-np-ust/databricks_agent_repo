@@ -71,6 +71,20 @@ class ToolPlugin(PlatformPlugin):
 - Accept an injectable client in `build(...)` so tests can use fakes.
 - Keep `raw` small: only the native fields that are useful for debugging.
 
+## 2b. Data-plane actions (`ActionProvider`, plugin API 1.1, optional)
+Implement these to let the data plane repair runs, sync code, run tests and profile tables for your tool. Then pass `actions=backend` to `PlatformInstance` and add `Capability.ACTIONS` to the manifest:
+
+| Method | Capability it serves | Contract |
+|---|---|---|
+| `get_run(run_id) -> Run` | `pipeline.get_run`, preconditions, watches | Raise if unknown |
+| `repair(run) -> {"run_id", ...}` | `pipeline.repair` | Re-run only the failed parts; return as soon as accepted (the observer watches the run) |
+| `sync_code(env) -> {"head", ...}` | `code.sync` | Update the env's checked-out code to its branch head; `head` must be the commit now deployed |
+| `run_tests(branch, notebooks, params) -> {"run_id", ...}` | `tests.run` | One-time run from `branch`; return as soon as submitted |
+| `profile(table, keys, not_null) -> {"rows", "duplicate_keys", "nulls"}` | `data.profile` | Read-only; validate identifiers |
+| `definition_hash(pipeline_id) -> str` | `definition_unchanged` precondition | Stable fingerprint of the job definition |
+
+Without `ActionProvider` the tool still gets monitoring, triage, reruns (via `RunController`) and escalation. Code fixes and reconciliation checks need it.
+
 ## 3. Knowledge pack (`knowledge/errors.yaml`)
 Map the tool's error codes to `transient`, `code`, `infra` or `unknown`. Plugin rules run before the generic rules, and the first match wins.
 ```yaml

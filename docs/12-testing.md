@@ -2,65 +2,39 @@
 
 | Suite | Command | Needs | What it covers |
 |---|---|---|---|
-| Core + plugins | `pytest` | venv only | Monitor/policy scenarios on the simulator, redaction, classification, config merge, secrets, registry and API versioning, notifications, demo-kit consistency, both plugin contract suites, Databricks plugin mapping against a fake client |
-| Sample pipelines | `pytest sample_pipelines/tests -rs` | `pip install -r sample_pipelines/requirements-dev.txt` + Java 17 for the Spark tests | Table naming (pure Python) and Spark transforms with ANSI mode on, like serverless |
-| CI | `.github/workflows/ci.yml` | GitHub | Both suites, agent path guard, `bundle validate` |
+| Agent + plugins | `pytest` | venv only, no network | Everything below |
+| Console UI | `cd frontend; npm run build` | Node | Strict TypeScript + production bundle |
+| Pipeline notebooks | runs in Databricks | the pipelines repo | `tests/test_*` notebooks (the Testing agent adds more per fix); CI there runs `notebook-lint` |
+| CI | `.github/workflows/ci.yml` | GitHub | `agent-tests`, `console-build` |
 
-## Scenario tests ([tests/test_monitor.py](../tests/test_monitor.py))
-Each one drives the real Monitor + PolicyEngine + StateStore against the simulator with a fake clock:
-- healthy run → no action
-- scenario 1: slow run → cancel + rerun twice → escalation on the 3rd breach, once
-- scenario 2: transient → one rerun → recovers, no incident. Repeated failures → escalation.
-- scenario 3: code failure → incident `cast_invalid_input`, fix-eligible only with `auto_fix`, never rerun
-- scenario 11: permission failure → escalation, no rerun
-- scenario 13: fake token redacted in incident, notifications and audit
-- dev env → notify only
-- kill switch, dry run, circuit breaker, p95 baseline threshold
-- platform without a controller → escalation
-- one broken platform doesn't stop the others
+Most end-to-end tests run **both planes in-process over the simulator**:
+- the data plane's observer and executor;
+- the control plane's LangGraph runner with an in-memory checkpointer.
 
-## Demo kit consistency ([tests/test_demo_kit.py](../tests/test_demo_kit.py))
-- Every data scenario produces the intended bad data.
-- Every release-fault edit still matches exactly one place in the current code, so the fault kit can't silently rot when the pipelines change.
-- The syntax-error fault really is a syntax error.
-- The fault catalog numbers cover 1–14.
+Only signed requests and events pass between the two planes, exactly as in production. Every `AGENT_*` variable is removed for tests (an autouse fixture), so a developer's `.env` can't change the results.
 
-## LLM tests ([tests/test_llm.py](../tests/test_llm.py))
-Run with a fake OpenAI client (no network). They cover:
-- ledger and cost
-- redaction before sending
-- model fallback and all-models-fail
-- daily request budget and per-incident token budget
-- tool-call parsing and JSON-in-content fallback
-- unusable answers
-- injection heuristic
-- monitor integration: diagnosis stored, scenario 14 budget stop, LLM outage, scenario 12 flag
+## Suites
 
-Tests run with every `AGENT_*` variable removed (autouse fixture), so a developer's `.env` can't change results.
+| File | Covers |
+|---|---|
+| [test_boundary.py](../tests/test_boundary.py) | Ed25519 sign/verify; tampering per field; unknown key; expiry; idempotent submit; single claim; ledger replay and UNKNOWN sweep; leases |
+| [test_foundations.py](../tests/test_foundations.py) | Autonomy matrix cases, caps and circuit breaker, kill switch and dry run, registry denial, bundle hash; agent registry; KEDB seeding, curation and per-platform names; evidence redaction and integrity; model aliases |
+| [test_data_plane.py](../tests/test_data_plane.py) | Observer events (once per run, redacted evidence, slow runs, watched runs); executor happy paths (rerun, tests, sync, prod repair, profile); refusals (replay, tampered, untrusted, policy drift, policy re-check, live preconditions); dry run; platform error → FAILED; bad sync → UNKNOWN; one active data plane |
+| [test_control_plane.py](../tests/test_control_plane.py) | The legacy monitor scenarios on the graph: transient → resolved; rerun fails → escalated without a second incident; code → KEDB → parked; permission → escalated; dev → recommend; slow → one approval → cancel+rerun; reject; approval timeout; kill switch; dry run; reconciliation finds duplicates; restart resumes without resubmitting; secrets redacted; LLM only without a KEDB answer; budget stop; one active control plane |
+| [test_code_fix.py](../tests/test_code_fix.py) | Full code-fix path (Databricks tests → dev/qa merge, sync, smoke → human prod merge → prod sync + repair → resolved + KEDB proposal); failing tests → repair; failing CI → repair on the same PR; repairs exhausted; prod PR closed; no `auto_fix`; Testing-agent guards |
+| [test_console_api.py](../tests/test_console_api.py) | Auth, tampered token, security headers; overview over both planes; incident detail with evidence, requests, graph state and approvals; redacted evidence; console cancel/rerun → L3 signed request executed by the data plane; approver approval resumes a paused graph (403 for operators, 409 twice); kill switch; takeover stops the graph; KEDB curation is admin-only; agents and policy views; snapshot-only platform state (no platform access); no secret values in settings |
+| [test_llm.py](../tests/test_llm.py) | Gateway ledger, cost, redaction, fallback, budgets; triage parsing, fallbacks, injection heuristic; graph integration: diagnosis stored, budget stop, LLM outage, prompt-injection flag |
+| [test_fix.py](../tests/test_fix.py) | Every patch guard of the Recovery fix writer (paths, compile, pyflakes, protected and forbidden patterns, tests, secrets) |
+| [test_github_client.py](../tests/test_github_client.py) | GitHub request shapes through `httpx.MockTransport` |
+| [test_core_units.py](../tests/test_core_units.py), [test_demo_kit.py](../tests/test_demo_kit.py) | Redaction, classification, config merge, secrets, p95; fault-kit mechanics |
+| plugin `tests/` | Contract suites for both plugins; Databricks mapping and actions (`repair_run`, Git-folder sync, `git_source` test submit, SQL profile, definition hash) against a fake client |
 
 ## Live checks
-- `python scripts/phase0_checks.py`: real Databricks and OpenRouter.
-- `AGENT_LLM_ENABLED=true pipeline-agent once` (twice, about 50 s apart) against the simulator: real diagnoses, visible in `pipeline-agent incidents --show 1` and `pipeline-agent llm`.
+- `python scripts/phase0_checks.py --redesign`: Git folders, a test notebook from a GitHub branch, `dbutils.notebook.run` on serverless, `repair_run`, SQL warehouse and `system.lakeflow` (all passed 2026-10-27).
+- Two real processes over the simulator (`dataplane --once` / `control --once`, 8 separate processes): a transient failure resolved across checkpoint restarts (2026-10-27).
+- A live signed `tests.run` executed in the Databricks workspace from the `dev` branch: `run_finished: succeeded` (2026-10-27).
+- Console smoke test over both planes: every new endpoint 200; a console rerun executed as an L3 signed request, ledger `SUCCESS` (2026-10-28).
 
-## Fix flow tests ([tests/test_fix.py](../tests/test_fix.py), [tests/test_github_client.py](../tests/test_github_client.py))
-These use an in-memory fake GitHub (branches, commits, PRs, checks, deploy runs, human merge/close) and a fake LLM. They cover:
-- every patch guard
-- the full flow dev → qa → human gate → prod deploy → prod rerun → resolved, including that the agent never merges `main` and asks for approval only once
-- validation retry and no-valid-patch escalation
-- CI failure (PR comment, escalation), reviewer rejection, protected `qa` waiting for a human
-- deploy failure, timeout, dry run, the one-fix-at-a-time limit
-- GitHub client request shapes through `httpx.MockTransport`
-
-## Console tests ([tests/test_console_api.py](../tests/test_console_api.py))
-The API runs over a store that the real Monitor wrote, through the simulator. The tests cover:
-- login required, tampered token rejected, security headers
-- overview KPIs, pipelines, incident detail and audit, active runs with threshold progress
-- RBAC: a viewer can't act, an operator can, and the action is audited with name and reason; a reason is mandatory
-- the admin kill switch reaches the agent's next tick; take-over; settings never expose secret values
-
-UI: `npm run build` (strict TypeScript + production bundle), also in CI (`console-build`).
-Live smoke test: all 15 read endpoints return 200 on real data (Databricks billing, GitHub diff), and a viewer action returns 403.
-
-## Latest local result (2026-10-26)
-- `pytest`: **148 passed**.
-- `pytest sample_pipelines/tests`: **3 passed, 1 skipped** (Spark module skipped: no PySpark/Java on this machine).
+## Latest local result (2026-10-28)
+- `pytest`: **187 passed**.
+- `npm run build`: clean.

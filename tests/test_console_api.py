@@ -31,7 +31,7 @@ def console(clock, store, tmp_path):
     demo.cycle(31)
     demo.cycle(301)  # sales_report passes its 300s threshold -> cancel needs approval
     settings = Settings(_env_file=None, evidence_dir=tmp_path)
-    ctx = ConsoleContext(settings, config=demo.deps.config, store=store, instances={"sim": demo.instance})
+    ctx = ConsoleContext(settings, config=demo.deps.config, store=store)  # no platform access: snapshots only
     return TestClient(create_app(settings, ctx)), demo
 
 
@@ -192,3 +192,16 @@ def test_settings_never_expose_secret_values(console):
     assert "plugins" in data and data["fix"]["promotion"] == ["dev", "qa", "main"]
     for p in data["platforms"]:
         assert all(v.endswith("://…") for v in p["secrets"].values())
+
+
+def test_console_reads_platform_state_from_observer_snapshots(console):
+    client, demo = console
+    assert not hasattr(client.app.state, "instances")
+    from pipeline_agent.api.context import ConsoleContext
+
+    assert not hasattr(ConsoleContext, "instances")  # no platform clients, no platform credentials in this process
+    h = login(client)
+    [platform] = client.get("/api/v1/platforms", headers=h).json()
+    assert platform["id"] == "sim" and platform["health"]["ok"] and "cancel" in platform["capabilities"] and platform["last_poll"]
+    costs = client.get("/api/v1/costs/compute?days=14", headers=h).json()
+    assert costs["is_estimate"] and costs["total"] > 0 and costs["errors"] == []

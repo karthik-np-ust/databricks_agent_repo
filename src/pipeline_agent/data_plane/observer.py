@@ -4,6 +4,9 @@
     run_slow      an active run passed its threshold (explicit, or p95 baseline x multiplier)
     run_finished  a run the executor started (rerun, repair, smoke, tests) reached a terminal state
 
+It also keeps platform snapshots (pipelines, active runs, health, costs) so the console never
+needs platform credentials.
+
 It decides nothing: classification hints (error class, matched rule) are passed along, the
 control plane's agents decide what to do. Watermarks are kept per platform under
 ``observer:<platform>`` so it never shares state with the legacy monitor.
@@ -55,6 +58,8 @@ class Observer:
         initial_lookback: timedelta = timedelta(minutes=60),
         overlap: timedelta = timedelta(minutes=5),
         max_error_chars: int = 12_000,
+        cost_refresh: timedelta = timedelta(minutes=30),
+        cost_days: int = 30,
         clock: Callable[[], datetime] = utcnow,
     ):
         self.config = config
@@ -66,15 +71,19 @@ class Observer:
         self.overlap = overlap
         self.max_error_chars = max_error_chars
         self.clock = clock
+        self.cost_refresh = cost_refresh
+        self.cost_days = cost_days
 
     def tick(self) -> ObserveReport:
         report = ObserveReport()
         for instance_id, inst in self.instances.items():
             try:
                 self._observe(instance_id, inst, report)
+                self._platform(instance_id, inst, ok=True, message="ok")
             except Exception as exc:  # one platform down must not stop the others
                 log.exception("observer: %s failed", instance_id)
                 report.errors.append(f"{instance_id}: {type(exc).__name__}: {exc}")
+                self._platform(instance_id, inst, ok=False, message=f"{type(exc).__name__}: {exc}"[:300])
         self._watch(report)
         return report
 
@@ -83,14 +92,45 @@ class Observer:
         now = self.clock()
         mark = self.store.get_watermark(f"{SOURCE}:{instance_id}")
         since = (mark - self.overlap) if mark else now - self.initial_lookback
+        active = []
         for run in inst.run_source.list_runs(since):
             report.runs_seen += 1
+            if run.status.is_active:
+                active.append(run.model_dump(mode="json", exclude={"raw"}))
             self.store.upsert_run(run, now=now)
             if run.status == RunStatus.FAILED and not self.events.exists("run_failed", run.key):
                 self._failed(inst, run, report)
             elif run.status.is_active and not self.events.exists("run_slow", run.key):
                 self._maybe_slow(run, now, report)
         self.store.set_watermark(f"{SOURCE}:{instance_id}", now)
+        self.store.put_snapshot(instance_id, "active_runs", active, now=now)
+        pipelines = [
+            {"platform_id": instance_id, "plugin": inst.manifest.name, "pipeline_id": p.pipeline_id, "name": p.name,
+             "env": p.env.value, "url": p.url, "tags": p.tags}
+            for p in inst.run_source.list_pipelines()
+        ]
+        self.store.put_snapshot(instance_id, "pipelines", pipelines, now=now)
+        self._costs(instance_id, inst, now)
+
+    # snapshots for the console ---------------------------------------------------
+    def _platform(self, instance_id: str, inst: PlatformInstance, ok: bool, message: str) -> None:
+        self.store.put_snapshot(instance_id, "platform", {
+            "plugin": inst.manifest.name, "display_name": inst.manifest.display_name, "version": inst.manifest.version,
+            "capabilities": sorted(c.value for c in inst.capabilities), "health": {"ok": ok, "message": message},
+        }, now=self.clock())
+
+    def _costs(self, instance_id: str, inst: PlatformInstance, now: datetime) -> None:
+        if not inst.supports(Capability.COST):
+            return
+        previous = self.store.snapshots("costs").get(instance_id)
+        if previous and now - previous[1] < self.cost_refresh:
+            return  # billing queries are slow and cost money: refresh every cost_refresh
+        try:
+            records = [r.model_dump(mode="json") for r in inst.costs.costs(now - timedelta(days=self.cost_days))]
+            data = {"records": records, "error": None}
+        except Exception as exc:
+            data = {"records": (previous[0] or {}).get("records", []) if previous else [], "error": f"{exc}"[:200]}
+        self.store.put_snapshot(instance_id, "costs", data, now=now)
 
     def _failure_text(self, inst: PlatformInstance, run: Run) -> tuple[str, dict]:
         if not inst.supports(Capability.LOGS):

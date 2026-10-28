@@ -17,6 +17,7 @@ Redesign (control plane / trust boundary / data plane, docs/04):
   known_errors      Known Error DB (signature, diagnostics, runbook, provenance, curation status)
   evidence          metadata of content-addressed evidence blobs
   leases            leader / per-target locks with expiry
+  platform_snapshots  what the observer last saw per platform (pipelines, active runs, health, costs) for the console
 """
 
 from __future__ import annotations
@@ -291,6 +292,16 @@ class LeaseRow(Base):
     holder: Mapped[str] = mapped_column(String(100))
     acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class SnapshotRow(Base):
+    """Latest observer snapshot per (platform, kind). The console reads these instead of calling platforms."""
+
+    __tablename__ = "platform_snapshots"
+    platform_id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(40), primary_key=True)  # platform | pipelines | active_runs | costs
+    data: Mapped[Any] = mapped_column(JSON)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 RERUN_ACTIONS = ("cancel_and_rerun", "rerun")
@@ -588,6 +599,17 @@ class StateStore:
     def list_actions(self, limit: int = 200) -> list[ActionRow]:
         with self.session() as s:
             return list(s.scalars(select(ActionRow).order_by(ActionRow.id.desc()).limit(limit)).all())
+
+    # platform snapshots (observer -> console) ------------------------------
+    def put_snapshot(self, platform_id: str, kind: str, data: Any, now: datetime | None = None) -> None:
+        with self.session() as s:
+            s.merge(SnapshotRow(platform_id=platform_id, kind=kind, data=data, updated_at=now or utcnow()))
+            s.commit()
+
+    def snapshots(self, kind: str) -> dict[str, tuple[Any, datetime]]:
+        """platform_id -> (data, updated_at)."""
+        with self.session() as s:
+            return {r.platform_id: (r.data, _aware(r.updated_at)) for r in s.scalars(select(SnapshotRow).where(SnapshotRow.kind == kind)).all()}
 
     def list_watermarks(self) -> dict[str, datetime]:
         with self.session() as s:

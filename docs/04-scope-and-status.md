@@ -1,8 +1,8 @@
 # 04 · Scope and status
 
-Last updated: 2026-10-27.
+Last updated: 2026-10-28.
 
-## 2026-10-27: LangGraph re-architecture (in progress)
+## LangGraph re-architecture (R0–R7 built, 2026-10-27/28)
 
 The agent is being rebuilt to mirror the "Agentic AIOps for DataOps v2" reference architecture:
 - a LangGraph multi-agent **control plane**: Monitoring, Triage, Recovery, a new **Testing** agent and Reconciliation, plus planner, policy with autonomy levels L0–L5, registry, Known Error DB and evidence store;
@@ -26,7 +26,7 @@ This reverses the earlier "no LangGraph" decision (Deviations table below). Sinc
 | R4 Control plane, runtime path | Incident graph, Monitoring/Triage/Planner/Recovery/Reconciliation, approvals by interrupt | ✅ Built 2026-10-27 (14 new tests, 198 total; verified with the two real CLI processes over the simulator). `pipeline-agent control`, `pipeline-agent approvals`. Runs next to the legacy `run` until R6 removes it |
 | R5 Code-fix path | Recovery fix + Testing agent, GitHub promotion, Git-folder sync, prod repair | ✅ Built 2026-10-28 (13 new tests, 211 total; over simulator + in-memory GitHub + fake LLM). On with `AGENT_FIX_ENABLED=true` + `AGENT_LLM_ENABLED=true`. Don't run the legacy `run` with fixes on at the same time (both would fix the same incident) |
 | R6 Console | Approvals, ledger, KEDB, registry, evidence; old monitor/fix flow deleted | ✅ Built 2026-10-28 (186 tests; console built; live smoke over both CLI processes). Legacy `monitor.py`, `fix/flow.py`, `policy.py` and `pipeline-agent run/once` removed. The console still *reads* pipelines, active runs and costs live from the platform; moving that to observer snapshots is R7 |
-| R7 Packaging + docs | 4-service compose, docs rewrite | ⏳ |
+| R7 Packaging + docs | 4-service compose, docs rewrite | ✅ Built 2026-10-28. The console reads observer snapshots (no platform client, no platform credentials); compose splits secrets and keys per service; docs 01, 02, 03, 05, 07, 08, 09, 10, 11, 12, 13 and 14 plus the README rewritten or updated. Compose is validated as YAML only (no Docker on this laptop) |
 
 ### R0 results (2026-10-27, `python scripts/phase0_checks.py --redesign`)
 | Check | Result | Decision |
@@ -38,9 +38,11 @@ This reverses the earlier "no LangGraph" decision (Deviations table below). Sinc
 | SQL warehouse | ✅ | `data.profile` uses statement execution |
 | `system.lakeflow.job_run_timeline` | ✅ readable | The observer can use it for history and baselines |
 
-**Until R5:**
-- The old fix flow can open a PR in the pipelines repo but cannot deploy it, because there is no `deploy.yml` any more.
-- Docs 02, 03, 05, 08, 10 and 12 still describe `sample_pipelines/`. They are rewritten in R7.
+**Not verified yet (needs your environment):**
+- the code-fix path against the real pipelines repo, OpenRouter and Databricks (`AGENT_LLM_ENABLED` + `AGENT_FIX_ENABLED`, both processes running);
+- `docker compose up` (no Docker on this laptop).
+
+Everything else is covered by tests and live checks ([12](12-testing.md)).
 
 ## Phase status (original build, before the redesign)
 
