@@ -8,7 +8,8 @@ import { ModeContext } from "./mode";
 import { Audit } from "./pages/Audit";
 import { CommandCenter } from "./pages/CommandCenter";
 import { Costs } from "./pages/Costs";
-import { Approvals, Fixes } from "./pages/Fixes";
+import { Approvals, KnownErrors, Requests } from "./pages/ControlPlane";
+import { Fixes } from "./pages/Fixes";
 import { IncidentDetail } from "./pages/IncidentDetail";
 import { Incidents } from "./pages/Incidents";
 import { LiveRuns } from "./pages/LiveRuns";
@@ -37,6 +38,8 @@ function Routed({ dark, toggleDark }: { dark: boolean; toggleDark: () => void })
         <Route path="/incidents/:id" element={<IncidentDetail />} />
         <Route path="/fixes" element={<Fixes />} />
         <Route path="/approvals" element={<Approvals />} />
+        <Route path="/requests" element={<Requests />} />
+        <Route path="/known-errors" element={<KnownErrors />} />
         <Route path="/costs" element={<Costs />} />
         <Route path="/observability" element={<Observability />} />
         <Route path="/audit" element={<Audit />} />

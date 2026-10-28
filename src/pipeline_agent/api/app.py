@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from .. import __version__
 from ..config import Settings
 from .actions import router as actions_router
+from .control import router as control_router
 from .auth import ROLES
 from .context import ConsoleContext
 from .views import router as views_router
@@ -82,6 +83,7 @@ def create_app(settings: Settings | None = None, context: ConsoleContext | None 
 
     app.include_router(views_router)
     app.include_router(actions_router)
+    app.include_router(control_router)
 
     @app.exception_handler(Exception)
     async def unhandled(request: Request, exc: Exception):  # never leak stack traces to the browser

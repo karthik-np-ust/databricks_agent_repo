@@ -10,7 +10,6 @@ from statistics import mean
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from .. import __version__
-from ..fix.flow import ACTIVE as ACTIVE_FIX_STATES
 from ..sdk.capabilities import Capability
 from ..sdk.models import Run, utcnow
 from ..sdk.registry import discover_plugins
@@ -19,6 +18,8 @@ from .auth import Principal, current_user, require
 from .context import ConsoleContext, iso
 
 log = logging.getLogger(__name__)
+ACTIVE_FIX_STATES = ("planned", "pr_open", "deploying", "verifying")
+
 router = APIRouter(prefix="/api/v1", dependencies=[Depends(require("viewer"))])
 
 
@@ -151,6 +152,7 @@ def overview(request: Request) -> dict:
             "mttr_s": mttr,
             "fixes_active": sum(1 for f in fixes if f.state in ACTIVE_FIX_STATES),
             "awaiting_human": sum(1 for f in fixes_out if f["awaiting_human"]),
+            "approvals_pending": len(c.approvals.list(status="pending")),
             "llm_calls_today": calls, "llm_tokens_today": tokens, "llm_cost_today": cost,
             "llm_requests_budget": c.config.budgets.per_day_requests, "llm_cost_budget": c.config.budgets.per_day_usd,
         },
@@ -272,7 +274,10 @@ def incident_detail(incident_id: int, request: Request) -> dict:
         raise HTTPException(404, "incident not found")
     fix = c.store.fix_for_incident(incident_id)
     targets = [inc.run_key, f"incident:{incident_id}"] + ([f"fix:{fix.id}"] if fix else [])
+    from .control import incident_extras  # late import: control.py imports this module
+
     return {
+        **incident_extras(request, incident_id, inc.run_key),
         "incident": _incident(inc, fix),
         "error_text": inc.error_message,
         "diagnosis": inc.diagnosis,

@@ -13,7 +13,7 @@ from ...store.db import EventRow, WorkItemRow
 from ..deps import ControlPlaneDeps
 from ..state import IncidentState
 
-KINDS = {"run_failed": "failure", "run_slow": "slow"}
+KINDS = {"run_failed": "failure", "run_slow": "slow", "manual_request": "manual", "fix_request": "fix"}
 
 
 def open_work_item(event: EventRow, deps: ControlPlaneDeps) -> tuple[int, IncidentState] | None:
@@ -22,6 +22,15 @@ def open_work_item(event: EventRow, deps: ControlPlaneDeps) -> tuple[int, Incide
     if kind == "failure" and deps.events.exists("watch", event.run_key):
         return None  # agent-started run: its own incident handles the outcome
     p = event.payload
+    if kind == "fix":  # a human asked for a code fix of an incident: continue from the incident's facts
+        incident = deps.store.get_incident(p["incident_id"])
+        if incident is None:
+            return None
+        p = {
+            "pipeline_id": incident.pipeline_id, "pipeline_name": incident.pipeline_name, "run_id": incident.run_key.rsplit(":", 1)[-1],
+            "env": incident.env, "url": incident.url, "error_class": incident.error_class, "matched_rule": incident.matched_rule,
+            "requested_by": p.get("requested_by"), "reason": p.get("reason"),
+        }
     now = deps.clock()
     try:
         with deps.store.session() as s:
@@ -43,4 +52,8 @@ def open_work_item(event: EventRow, deps: ControlPlaneDeps) -> tuple[int, Incide
         "hints": {k: p.get(k) for k in ("error_class", "matched_rule", "failed_tasks", "error_headline", "elapsed_seconds", "threshold_seconds")},
         "step": 0, "results": [], "approval": None,
     }
+    if kind == "manual":
+        state["manual"] = {k: p.get(k) for k in ("capability", "target", "params", "requested_by", "reason")}
+    if kind == "fix":
+        state["hints"]["requested_by"] = p.get("requested_by")
     return work_item_id, state

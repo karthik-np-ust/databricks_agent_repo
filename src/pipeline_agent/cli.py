@@ -1,4 +1,4 @@
-"""Command line: ``pipeline-agent {run,once,check,plugins,incidents,audit}``."""
+"""Command line: ``pipeline-agent {dataplane,control,approvals,check,plugins,incidents,kedb,keys,audit,...}``."""
 
 from __future__ import annotations
 
@@ -14,35 +14,19 @@ from dotenv import load_dotenv
 
 from .config import Settings, load_agent_config
 from .net import use_system_trust_store
-from .runtime import build_gateway, build_github, build_instances, build_monitor
+from .runtime import build_gateway, build_github, build_instances
 from .sdk.registry import discover_plugins
 from .store.db import StateStore
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
-    settings = Settings()
-    monitor = build_monitor(settings)
-    logging.info("Monitoring %d platform instance(s) every %ss", len(monitor.instances), settings.poll_interval_seconds)
-    while True:
-        _print_report(monitor.tick())
-        time.sleep(settings.poll_interval_seconds)
-
-
-def _cmd_once(args: argparse.Namespace) -> int:
-    report = build_monitor(Settings()).tick()
-    _print_report(report)
-    return 1 if report.errors else 0
-
-
-def _print_report(report) -> None:
-    if report.skipped:
-        print("Kill switch on: poll skipped")
-        return
-    print(f"{report.started_at:%Y-%m-%d %H:%M:%S}Z  runs seen: {report.runs_seen}  decisions: {len(report.decisions)}")
-    for key, action, reason in report.decisions:
-        print(f"  {action:<18} {key}  {reason}")
-    for err in report.errors:
-        print(f"  ERROR {err}")
+    print(
+        "The single-process agent was replaced by two processes (trust boundary):\n"
+        "  pipeline-agent dataplane   observe platforms, execute signed requests (holds platform credentials)\n"
+        "  pipeline-agent control     LangGraph incident graphs (no platform credentials)\n"
+        "Run both (two terminals or docker compose). See docs/02-architecture.md."
+    )
+    return 2
 
 
 def _cmd_check(args: argparse.Namespace) -> int:
@@ -98,15 +82,19 @@ def _cmd_triage(args: argparse.Namespace) -> int:
     if not settings.llm_enabled:
         print("LLM is disabled. Set AGENT_LLM_ENABLED=true in .env")
         return 1
-    monitor = build_monitor(settings)
-    inc = monitor.store.get_incident(args.incident_id)
+    from .llm.triage import Triage
+
+    store = StateStore(settings.database_url)
+    inc = store.get_incident(args.incident_id)
     if inc is None:
         print(f"No incident #{args.incident_id}")
         return 1
-    diag = monitor.run_triage(inc.id, inc.error_message)
-    if diag is None:
-        print("No diagnosis (see `pipeline-agent audit` for llm_budget_stop / llm_unavailable)")
-        return 1
+    triage = Triage(build_gateway(settings, load_agent_config(settings.config_dir), store))
+    diag = triage.diagnose(incident_id=inc.id, platform=inc.platform_id, pipeline=inc.pipeline_name, env=inc.env,
+                           error_text=inc.error_message, rule_class=inc.error_class, matched_rule=inc.matched_rule)
+    _, tokens, cost = store.llm_usage(incident_id=inc.id)
+    store.update_incident(inc.id, diagnosis=diag.model_dump(mode="json"), suspicious_content=int(diag.suspicious_content),
+                          llm_tokens=tokens, llm_cost_usd=cost)
     print(json.dumps(diag.model_dump(mode="json"), indent=2))
     return 0
 
@@ -159,25 +147,20 @@ def _cmd_fixes(args: argparse.Namespace) -> int:
 
 
 def _cmd_fix(args: argparse.Namespace) -> int:
+    """Ask the control plane to fix an incident's code (same as 'Start fix' in the console)."""
     settings = Settings()
     if not (settings.fix_enabled and settings.llm_enabled):
         print("Set AGENT_LLM_ENABLED=true and AGENT_FIX_ENABLED=true in .env")
         return 1
-    monitor = build_monitor(settings)
-    inc = monitor.store.get_incident(args.incident_id)
+    from .boundary.events import EventLog
+
+    store = StateStore(settings.database_url)
+    inc = store.get_incident(args.incident_id)
     if inc is None:
         print(f"No incident #{args.incident_id}")
         return 1
-    if inc.diagnosis is None:
-        print("Incident has no diagnosis yet; running triage first")
-        monitor.run_triage(inc.id, inc.error_message)
-    fix = monitor.fixer.start(inc.id)
-    if fix is None:
-        print("Deferred: another fix is in flight (fix.max_concurrent)")
-        return 1
-    print(f"fix #{fix.id} {fix.state}; advancing one step now (writing the patch can take a minute)...")
-    for fix_id, before, after in monitor.fixer.advance_all():
-        print(f"  fix #{fix_id}: {before} -> {after}")
+    EventLog(store).emit("fix_request", inc.platform_id, inc.run_key, {"incident_id": inc.id, "requested_by": "cli", "reason": "pipeline-agent fix"})
+    print(f"fix requested for incident #{inc.id}; the control plane starts the Recovery and Testing agents on its next tick")
     return 0
 
 
@@ -316,8 +299,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="pipeline-agent", description="Pipeline production support agent")
     parser.add_argument("-v", "--verbose", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("run", help="poll continuously").set_defaults(func=_cmd_run)
-    sub.add_parser("once", help="run a single poll and exit").set_defaults(func=_cmd_once)
+    sub.add_parser("run", help="(replaced: use `dataplane` and `control`)").set_defaults(func=_cmd_run)
     sub.add_parser("check", help="validate config and test every platform connection").set_defaults(func=_cmd_check)
     sub.add_parser("plugins", help="list installed plugins").set_defaults(func=_cmd_plugins)
     p_inc = sub.add_parser("incidents", help="list incidents")

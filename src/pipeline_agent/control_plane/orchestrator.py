@@ -71,6 +71,10 @@ class IncidentGraph(CodeFixNodes):
 
     # nodes ---------------------------------------------------------------------
     def intake(self, s: IncidentState) -> dict[str, Any]:
+        if s["kind"] == "manual":
+            m = s["manual"]
+            self._audit(s, "manual_request", capability=m["capability"], requested_by=m["requested_by"], reason=m["reason"])
+            return {}
         existing = self.d.store.incident_for_run(s["run_key"])
         if existing is not None:  # replay after a crash: the incident row is already there
             return {"incident_id": existing.id}
@@ -101,13 +105,19 @@ class IncidentGraph(CodeFixNodes):
             _, tokens, cost = self.d.store.llm_usage(incident_id=s["incident_id"])
             fields.update(diagnosis=diag, suspicious_content=int(diag.get("suspicious_content", False)), llm_tokens=tokens, llm_cost_usd=cost)
             self._audit(s, "diagnosed", model=diag.get("model"), llm_class=diag.get("error_class"), confidence=diag.get("confidence"))
-            self._notify(s, f"Diagnosis: {s['pipeline_name']}", diag.get("summary", ""), Severity.CRITICAL if diag.get("suspicious_content") else Severity.INFO)
+            facts = {"llm class": f"{diag.get('error_class')} ({diag.get('confidence', 0):.0%})", "tokens / cost": f"{tokens} / ${cost:.4f}"}
+            if diag.get("suspicious_content"):  # scenario 12: possible prompt injection in logs/data
+                self._audit(s, "suspicious_content")
+                facts["security"] = "SUSPICIOUS CONTENT in logs/data (possible prompt injection) - review carefully"
+            self._notify(s, f"Diagnosis: {s['pipeline_name']}", diag.get("summary", ""),
+                         Severity.CRITICAL if diag.get("suspicious_content") else Severity.INFO, **facts)
         elif diag:
             self._audit(s, "llm_budget_stop" if diag.get("budget_stop") else "llm_unavailable", error=diag["error"])
         if update.get("kedb"):
             kedb = update["kedb"]
             self._audit(s, "kedb_matched", entry=kedb["name"], runbook=kedb["runbook"], provenance=kedb["provenance"])
-        self.d.store.update_incident(s["incident_id"], now=self.d.clock(), **fields)
+        if s.get("incident_id"):  # console requests (manual) have no incident
+            self.d.store.update_incident(s["incident_id"], now=self.d.clock(), **fields)
         return update
 
     def plan(self, s: IncidentState) -> dict[str, Any]:
@@ -122,7 +132,7 @@ class IncidentGraph(CodeFixNodes):
 
     def _can_fix(self, s: IncidentState) -> bool:
         incident = self.d.store.get_incident(s["incident_id"])
-        return self.d.code_fix_enabled and bool(incident and incident.fix_eligible)
+        return self.d.code_fix_enabled and bool(incident and (incident.fix_eligible or s["kind"] == "fix"))
 
     def decide(self, s: IncidentState) -> dict[str, Any]:
         step = s["steps"][s["step"]]

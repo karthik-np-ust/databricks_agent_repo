@@ -6,6 +6,7 @@ import { ArrowClockwise20Regular, Open16Regular, PersonArrowLeft20Regular, Wrenc
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useFixDiff, useIncident, useRetriage, useStartFix, useTakeover } from "../api/queries";
+import { IncidentAgentPanel } from "./ControlPlane";
 import type { IncidentDetail as Detail } from "../api/types";
 import { useAuth } from "../auth/auth";
 import { DiffView } from "../components/DiffView";
@@ -121,10 +122,10 @@ export function IncidentDetail() {
                 {retriage.isPending ? "Diagnosing…" : "Re-run diagnosis"}
               </Button>
             )}
-            {can("approver") && !active && inc.fix_eligible && inc.status !== "resolved" && (
+            {can("approver") && !active && inc.error_class === "code" && inc.status !== "resolved" && inc.status !== "fixing" && (
               <ReasonDialog
                 title="Start an agent fix?"
-                description="The agent writes a fix, opens a PR to dev and promotes it through qa. Prod still needs your approval in GitHub."
+                description="The Recovery agent writes the fix, the Testing agent proves it in Databricks, then it is promoted dev → qa. Prod still needs your merge in GitHub."
                 confirmLabel="Start fix"
                 onConfirm={(reason) => startFix.mutateAsync({ id, reason })}
                 trigger={(open) => <Button appearance="primary" icon={<Wrench20Regular />} onClick={open}>Start agent fix</Button>}
@@ -134,7 +135,7 @@ export function IncidentDetail() {
               <ReasonDialog
                 danger
                 title="Take over this incident?"
-                description="The agent stops working on it (an active fix is stopped; open PRs stay for you) and the incident is marked escalated."
+                description="The agent stops working on it (its graph stops, pending approvals are rejected, open PRs stay for you) and the incident is marked escalated."
                 confirmLabel="Take over"
                 onConfirm={(reason) => takeover.mutateAsync({ id, reason })}
                 trigger={(open) => <Button icon={<PersonArrowLeft20Regular />} onClick={open}>Take over</Button>}
@@ -144,6 +145,7 @@ export function IncidentDetail() {
         }
       />
       {retriage.error && <MessageBar intent="error" style={{ marginBottom: 12 }}><MessageBarBody>{String(retriage.error.message)}</MessageBarBody></MessageBar>}
+      <IncidentAgentPanel data={data} />
 
       <Card style={{ marginBottom: 16 }}>
         <CardHeader header={<Text weight="semibold" size={400}>Lifecycle</Text>} description="Built from the audit trail. Hover a step for details." />

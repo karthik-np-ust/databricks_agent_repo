@@ -192,6 +192,7 @@ class CodeFixNodes:
                          "Tests passed in Databricks and the fix works in dev and qa. Review and merge the PR to deploy to prod.",
                          Severity.WARNING, pr=pr.url)
             self._audit(s, "fix_awaiting_approval", pr=pr.url)
+            self._fix_update(s, "awaiting approval")
         return {"fix": fix}
 
     def fix_wait_checks(self, s: IncidentState) -> dict[str, Any]:
@@ -221,6 +222,7 @@ class CodeFixNodes:
         sha = target in self._cfg.auto_merge and self.d.repo.merge_pr(fix["pr"]["number"], f"Merge agent fix for incident #{s['incident_id']} into {target}")
         if not sha:
             self._audit(s, "fix_merge_blocked", pr=fix["pr"]["url"], reason="branch rules require a human")
+            self._fix_update(s, "merge blocked")
             return {"fix": {**fix, "phase": "human_merge"}}
         self._fix_update(s, f"agent merged PR #{fix['pr']['number']} into {target}", merge_sha=sha)
         self._audit(s, "fix_pr_merged", pr=fix["pr"]["url"], branch=target, by="agent")

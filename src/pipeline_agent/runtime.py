@@ -1,15 +1,13 @@
-"""Wires settings + config + plugins + store + notifier (+ LLM) into a Monitor."""
+"""Wires settings + config + plugins + store into the two processes: data plane and control plane."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 from .config import AgentConfig, Settings, load_agent_config
-from .fix.flow import FixFlow
 from .git.github import AppTokenAuth, GitHubClient
 from .llm.gateway import LLMGateway
 from .llm.triage import Triage
-from .monitor import Monitor
 from .notify.webhook import ConsoleNotifier, Notifier, WebhookNotifier
 from .sdk.plugin import PlatformInstance
 from .sdk.registry import load_plugin
@@ -148,28 +146,4 @@ def build_control_plane(settings: Settings | None = None):
     return ControlPlane(
         deps, build_checkpointer(settings.checkpoint_url),
         approval_timeout=timedelta(hours=settings.approval_timeout_hours), action_timeout=timedelta(minutes=settings.action_timeout_minutes),
-    )
-
-
-def build_monitor(settings: Settings | None = None) -> Monitor:
-    settings = settings or Settings()
-    config = load_agent_config(settings.config_dir)
-    store = StateStore(settings.database_url)
-    instances = build_instances(config)
-    notifier = build_notifier(settings)
-    gateway = build_gateway(settings, config, store) if settings.llm_enabled else None
-    triage = Triage(gateway) if gateway else None
-    fixer = None
-    if settings.fix_enabled:
-        if gateway is None:
-            raise ValueError("AGENT_FIX_ENABLED needs AGENT_LLM_ENABLED=true")
-        fixer = FixFlow(settings, config.fix, store, build_github(settings, config), gateway, config.llm.fix_models, instances, notifier)
-    return Monitor(
-        settings=settings,
-        config=config,
-        instances=instances,
-        store=store,
-        notifier=notifier,
-        triage=triage,
-        fixer=fixer,
     )
