@@ -16,7 +16,9 @@ from ..boundary.queue import ActionQueue
 from ..config import AgentConfig
 from ..data_plane.ledger import ExecutionLedger
 from ..evidence import EvidenceStore
+from ..git.github import RepoHost
 from ..kedb import KnownErrorDB
+from ..llm.model_gateway import AliasedModelGateway
 from ..llm.triage import Triage
 from ..notify.webhook import Notifier
 from ..sdk.models import utcnow
@@ -37,6 +39,9 @@ class ControlPlaneDeps:
     evidence: EvidenceStore
     notifier: Notifier
     triage: Triage | None = None  # None: no LLM, KEDB and classifier hints only
+    # Code-fix path (Recovery fix writer + Testing agent): the pipelines repo and model aliases.
+    repo: RepoHost | None = None
+    models: AliasedModelGateway | None = None
     controls: Callable[[], dict[str, Any]] = field(default=lambda: {"enabled": True, "dry_run": False})
     clock: Callable[[], datetime] = utcnow
     request_ttl: timedelta = timedelta(minutes=30)
@@ -48,3 +53,7 @@ class ControlPlaneDeps:
         self.kedb = KnownErrorDB(self.store)
         self.approvals = Approvals(self.store)
         self.audit = AuditLogger(self.store)
+
+    @property
+    def code_fix_enabled(self) -> bool:
+        return self.repo is not None and self.models is not None and bool(self.config.fix.repo)

@@ -57,7 +57,10 @@ class ControlPlane:
         self.leases = Leases(deps.store)
         self.holder = holder or f"{socket.gethostname()}:{os.getpid()}"
         self.lease_ttl = lease_ttl
-        self.timeouts = {"approval": approval_timeout, "action_result": action_timeout, "run_finished": action_timeout}
+        self.timeouts = {
+            "approval": approval_timeout, "action_result": action_timeout, "run_finished": action_timeout, "checks": action_timeout,
+            "pr_merged": timedelta(hours=deps.config.fix.max_wait_hours),
+        }
 
     # loop ---------------------------------------------------------------------
     def tick(self) -> ControlReport:
@@ -121,6 +124,17 @@ class ControlPlane:
                 if event.payload.get("request_id") == wait["request_id"]:
                     self.d.events.consume([event.id], now=now)
                     return {**event.payload, "evidence_ids": event.evidence_ids}
+        elif kind == "checks" and self.d.repo is not None:
+            pr = self.d.repo.get_pr(wait["pr"])
+            status = self.d.repo.checks(pr.head_sha, self.d.config.fix.required_checks)
+            if status.state in ("success", "failure"):
+                return {"state": status.state, "failures": status.failures}
+        elif kind == "pr_merged" and self.d.repo is not None:
+            pr = self.d.repo.get_pr(wait["pr"])
+            if pr.merged:
+                return {"status": "merged", "merge_sha": pr.merge_sha, "url": pr.url}
+            if pr.state == "closed":
+                return {"status": "closed", "url": pr.url}
         since = datetime.fromisoformat(wait["since"]) if wait.get("since") else now
         if kind in self.timeouts and now - since > self.timeouts[kind]:
             return {"status": "timeout", "error": f"no {kind.replace('_', ' ')} within {self.timeouts[kind]}"}

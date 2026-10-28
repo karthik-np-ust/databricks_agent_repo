@@ -2,6 +2,42 @@
 
 Newest first. Each entry: what was built, how it was verified, what's next.
 
+## 2026-10-28: Redesign R5, code-fix path and Testing agent
+**Built** (in the incident graph, `control_plane/codefix.py`):
+- **Recovery fix writer.** It reuses `FixWriter` and all its guards: allowed paths, compile, pyflakes, `DQAssertionError` kept, `forbidden_patterns`, secrets. It changes only pipeline code and commits to `fix/incident-<id>`.
+- **Testing agent** (`agents/testing.py`, model alias `test`, prompt `tests-v1`):
+  - writes Databricks test notebooks under `tests/` with its own guards: notebook format, compiles, pyflakes, runs `../notebooks/<name>` via `dbutils.notebook.run`, drops its schemas, no secrets;
+  - a signed `tests.run` request runs them in Databricks from the fix branch.
+- **Repair loop.** A failing Databricks test run, or a failing CI check on the fix PR, feeds its output back to the fix writer (`repair_attempts: 2`). The tests then run again and the open PR's checks are awaited again.
+- **Promotion:**
+  1. PR fix branch → `dev`; wait for checks; `code.merge`, L4, decided as env=dev.
+  2. `code.sync` of the dev Git folder (expected head = merge commit), then a smoke run of the `[dev]` job.
+  3. The same for `qa`.
+  4. PR `qa` → `main` waits for the **human merge in GitHub**. That merge is the `github_merge` approval for the prod `code.sync` and the `pipeline.repair` of the original failed run (both L3).
+  5. Reconciliation checks run, then the incident is resolved.
+- **Learning:** a resolved fix proposes a KEDB entry (`incident:<id>`, runbook `code_fix`, fix hint, rollback = PR links) for an admin to approve.
+- **Graph mechanics:**
+  - steps carry their own env;
+  - request keys are `wi-<id>:<results so far>:<capability>`, so a repeated test run after a repair is a new request while a replay is still deduplicated;
+  - the runner resolves the new waits `checks` and `pr_merged` (timeout: `fix.max_wait_hours`).
+- **Console compatibility:** `fix_attempts` is still maintained, along with the same audit names (`fix_pr_opened`, `fix_pr_merged`, `fix_deployed`, `fix_resolved`/`fix_failed`) plus `fix_written`, `tests_written`, `tests_passed`, `tests_failed`, `fix_repaired`, `kedb_proposed`.
+- **Simulator:** optional per-env job `id`, so one pipeline can have a job in each of dev/qa/prod, as on Databricks.
+
+**Verified:**
+- 211 tests pass, 13 of them new:
+  - full fix → Databricks tests → dev/qa merge, sync and smoke → human prod merge → prod sync + repair → resolved, plus the KEDB proposal;
+  - failing tests → repair → pass;
+  - failing CI → repair on the same PR;
+  - repairs exhausted → escalated, never promoted;
+  - prod PR closed → escalated, prod untouched;
+  - no `auto_fix` → waits for a human;
+  - Testing-agent guards.
+- Two fake-LLM mistakes during test writing confirmed existing guards still bite: an identical "repair" is rejected as "does not change anything".
+
+**LLM cost per code fix:** 2 requests (fix + tests), plus 1 per repair, plus triage only when the KEDB has no match. That's about 2–5 of the 45/day free-tier requests.
+
+**Next:** R6 console: approvals, ledger, KEDB, agents/policy, evidence and tests in the UI; delete the legacy monitor and fix flow.
+
 ## 2026-10-27: Redesign R4, control plane (LangGraph)
 **Built** (`pipeline-agent control [--once]`; no platform instances and no platform credentials in this process):
 - **Orchestrator (`control_plane/orchestrator.py`):** one LangGraph thread per work item, checkpointed in SQLite (`var/checkpoints.sqlite`; a `postgresql://` URL uses PostgresSaver):

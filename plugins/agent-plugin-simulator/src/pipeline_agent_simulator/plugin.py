@@ -54,6 +54,8 @@ DEFAULT_ERRORS: dict[str, str] = {
 
 class SimPipeline(BaseModel):
     name: str
+    # Job id, when the same pipeline exists in several envs (as on Databricks: one job per env). Defaults to the name.
+    id: str | None = None
     env: Env = Env.PROD
     behaviour: Behaviour = "ok"
     duration_seconds: int = Field(60, ge=1)
@@ -65,6 +67,10 @@ class SimPipeline(BaseModel):
     error_message: str | None = None
     dbu_per_hour: float = 2.0
     code_path: str | None = None
+
+    @property
+    def key(self) -> str:
+        return self.id or self.name
 
 
 class SimulatorConfig(BaseModel):
@@ -100,7 +106,7 @@ class SimulatorBackend:
         self.config = config
         self.clock = clock
         self._rng = random.Random(config.seed)
-        self._by_name = {p.name: p for p in config.pipelines}
+        self._by_name = {p.key: p for p in config.pipelines}  # keyed by job id
         self.runs: list[dict[str, Any]] = []
         self.attempts: dict[str, int] = {}
         self.fixed: set[str] = set()  # "<env>:<pipeline>" whose code was fixed by a sync
@@ -109,7 +115,7 @@ class SimulatorBackend:
         self._load()
         if config.start_on_boot and not self.runs:
             for p in config.pipelines:
-                self.trigger(p.name, triggered_by="schedule")
+                self.trigger(p.key, triggered_by="schedule")
 
     # persistence ---------------------------------------------------------
     def _load(self) -> None:
@@ -126,8 +132,8 @@ class SimulatorBackend:
     # simulation ----------------------------------------------------------
     def _outcome(self, p: SimPipeline) -> tuple[int, str, str | None]:
         """(duration, outcome, error) of the next attempt of ``p``."""
-        attempt = self.attempts.get(p.name, 0)
-        self.attempts[p.name] = attempt + 1
+        attempt = self.attempts.get(p.key, 0)
+        self.attempts[p.key] = attempt + 1
         duration, outcome = p.duration_seconds, "succeeded"
         if p.behaviour == "slow":
             duration = p.slow_duration_seconds
@@ -172,14 +178,14 @@ class SimulatorBackend:
             status, end = RunStatus(raw["outcome"]), planned_end
         return Run(
             platform_id=self.instance_id,
-            pipeline_id=p.name,
+            pipeline_id=p.key,
             pipeline_name=p.name,
             run_id=raw["run_id"],
             status=status,
             env=p.env,
             start_time=start,
             end_time=end,
-            url=f"sim://{self.instance_id}/{p.name}/runs/{raw['run_id']}",
+            url=f"sim://{self.instance_id}/{p.key}/runs/{raw['run_id']}",
             triggered_by=raw["triggered_by"],
             parameters=raw["params"],
             raw=raw,
@@ -188,7 +194,7 @@ class SimulatorBackend:
     # RunSource -----------------------------------------------------------
     def list_pipelines(self) -> list[Pipeline]:
         return [
-            Pipeline(platform_id=self.instance_id, pipeline_id=p.name, name=p.name, env=p.env, url=f"sim://{self.instance_id}/{p.name}")
+            Pipeline(platform_id=self.instance_id, pipeline_id=p.key, name=p.name, env=p.env, url=f"sim://{self.instance_id}/{p.key}")
             for p in self.config.pipelines
         ]
 
@@ -225,7 +231,7 @@ class SimulatorBackend:
         for run in self.list_runs(since):
             if run.end_time is None or run.start_time is None:
                 continue
-            p = self._by_name[run.pipeline_name]
+            p = self._by_name[run.pipeline_id]
             dbu = (run.end_time - run.start_time).total_seconds() / 3600 * p.dbu_per_hour
             records.append(
                 CostRecord(

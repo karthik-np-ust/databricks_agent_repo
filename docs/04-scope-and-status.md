@@ -24,7 +24,7 @@ This reverses the earlier "no LangGraph" decision (Deviations table below). Sinc
 | R2 Foundations | DB tables, Ed25519 signing, policy bundle + autonomy matrix, agent manifests, KEDB, evidence store, model gateway wrapper | ✅ Built 2026-10-27 (27 new tests, 166 total). Not wired into the running agent yet (R3/R4) |
 | R3 Data plane | Executor, ledger, capability router, observer; Databricks adapter: repair, code.sync, tests.run, smoke_run, data.profile | ✅ Built 2026-10-27 (18 new tests, 184 total; live read-only tick + one signed `tests.run` against the workspace). `pipeline-agent dataplane` |
 | R4 Control plane, runtime path | Incident graph, Monitoring/Triage/Planner/Recovery/Reconciliation, approvals by interrupt | ✅ Built 2026-10-27 (14 new tests, 198 total; verified with the two real CLI processes over the simulator). `pipeline-agent control`, `pipeline-agent approvals`. Runs next to the legacy `run` until R6 removes it |
-| R5 Code-fix path | Recovery fix + Testing agent, GitHub promotion, Git-folder sync, prod repair | ⏳ |
+| R5 Code-fix path | Recovery fix + Testing agent, GitHub promotion, Git-folder sync, prod repair | ✅ Built 2026-10-28 (13 new tests, 211 total; over simulator + in-memory GitHub + fake LLM). On with `AGENT_FIX_ENABLED=true` + `AGENT_LLM_ENABLED=true`. Don't run the legacy `run` with fixes on at the same time (both would fix the same incident) |
 | R6 Console | Approvals, ledger, KEDB, registry, evidence; old monitor/fix flow deleted | ⏳ |
 | R7 Packaging + docs | 4-service compose, docs rewrite | ⏳ |
 

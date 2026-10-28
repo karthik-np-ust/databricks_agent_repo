@@ -131,11 +131,19 @@ def build_control_plane(settings: Settings | None = None):
     config = load_agent_config(settings.config_dir)
     store = StateStore(settings.database_url)
     engine = build_policy_engine(settings)
-    triage = Triage(build_gateway(settings, config, store)) if settings.llm_enabled else None
+    gateway = build_gateway(settings, config, store) if settings.llm_enabled else None
+    triage = Triage(gateway) if gateway else None
+    repo, models = None, None
+    if settings.fix_enabled:
+        from .llm.model_gateway import AliasedModelGateway
+
+        if gateway is None:
+            raise ValueError("AGENT_FIX_ENABLED needs AGENT_LLM_ENABLED=true")
+        repo, models = build_github(settings, config), AliasedModelGateway(gateway, config.llm)
     deps = ControlPlaneDeps(
         config=config, store=store, engine=engine, registry=AgentRegistry.load(settings.config_dir / "agents"),
         signer=Signer.from_file(settings.signing_key_path), evidence=EvidenceStore(store, LocalBlobs(settings.evidence_dir)),
-        notifier=build_notifier(settings), triage=triage, controls=lambda: runtime_controls(settings, store),
+        notifier=build_notifier(settings), triage=triage, repo=repo, models=models, controls=lambda: runtime_controls(settings, store),
     )
     return ControlPlane(
         deps, build_checkpointer(settings.checkpoint_url),
